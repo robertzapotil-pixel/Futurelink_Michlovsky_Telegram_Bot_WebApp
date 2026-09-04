@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Nová zásuvka</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <style>
   :root {
     color-scheme: light dark;
@@ -195,21 +195,41 @@
     const status = document.getElementById("qr_status");
     if (!file) return;
     status.textContent = "Čtu QR kód…";
+    status.className = "hint";
+
+    if (typeof jsQR !== "function") {
+      status.textContent = "Knihovna pro čtení QR se nenačetla. Zkontroluj připojení a zkus to znovu, nebo napiš kód ručně.";
+      status.className = "hint status-bad";
+      return;
+    }
+
     const img = new Image();
+    img.onerror = () => {
+      status.textContent = "Fotku se nepodařilo načíst. Zkus prosím jinou.";
+      status.className = "hint status-bad";
+    };
     img.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const result = jsQR(imageData.data, imageData.width, imageData.height);
-      if (result) {
-        document.getElementById("qr_manual").value = result.data;
-        status.textContent = "QR kód přečten.";
-        status.className = "hint status-ok";
-      } else {
-        status.textContent = "Nepodařilo se přečíst, uprav prosím ručně níže.";
+      try {
+        // Downscale huge phone-camera photos — large canvases are slow/unreliable on mobile.
+        const maxDim = 1600;
+        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const result = jsQR(imageData.data, imageData.width, imageData.height);
+        if (result) {
+          document.getElementById("qr_manual").value = result.data;
+          status.textContent = "QR kód přečten.";
+          status.className = "hint status-ok";
+        } else {
+          status.textContent = "Nepodařilo se přečíst, uprav prosím ručně níže.";
+          status.className = "hint status-bad";
+        }
+      } catch (err) {
+        status.textContent = "Nastala chyba při čtení QR kódu, uprav prosím ručně níže.";
         status.className = "hint status-bad";
       }
     };
