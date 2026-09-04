@@ -266,6 +266,20 @@
   // uploadPhoto() can reuse it instead of re-decoding the same image again.
   const scaledCanvasCache = new WeakMap();
 
+  // The QR sticker encodes an activation URL like
+  // https://internetvzasuvce.cz/?id=B2AGWVN — only the "id" value matters
+  // to us. Falls back to the raw decoded text for any other QR format.
+  function extractQrCode(rawText) {
+    try {
+      const url = new URL(rawText);
+      const id = url.searchParams.get("id");
+      if (id) return id;
+    } catch (err) {
+      // Not a URL — use the raw text as-is.
+    }
+    return rawText;
+  }
+
   // QR decode fully client-side; the image is uploaded separately (for documentation) below.
   async function decodeQr(file) {
     const status = document.getElementById("qr_status");
@@ -292,7 +306,7 @@
         if (result) break;
       }
       if (result) {
-        document.getElementById("qr_manual").value = result.data;
+        document.getElementById("qr_manual").value = extractQrCode(result.data);
         status.textContent = "QR kód přečten.";
         status.className = "hint status-ok";
       } else {
