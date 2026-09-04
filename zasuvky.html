@@ -129,6 +129,8 @@
 <script>
   // Apps Script Web App that saves an uploaded photo to Drive and returns its fileId.
   const UPLOAD_URL = "https://script.google.com/macros/s/AKfycby5aOfaJjORZCQ5gFtgSJ7ZFPnFc9qwacHYVxAQDOBeykc9wfMcnLrJ-dj2-loTzA3SrA/exec";
+  const UPLOAD_MAX_DIM = 1280; // smaller upload = faster; still plenty for documentation photos
+  const UPLOAD_JPEG_QUALITY = 0.7;
 
   const tg = window.Telegram?.WebApp;
   tg?.ready();
@@ -260,6 +262,10 @@
     });
   }
 
+  // Cache the (already-scaled) canvas used for QR decoding, keyed by File, so
+  // uploadPhoto() can reuse it instead of re-decoding the same image again.
+  const scaledCanvasCache = new WeakMap();
+
   // QR decode fully client-side; the image is uploaded separately (for documentation) below.
   async function decodeQr(file) {
     const status = document.getElementById("qr_status");
@@ -274,9 +280,12 @@
     }
 
     try {
+      // The upload-sized (smaller) canvas is tried first and cached for reuse
+      // on upload; only escalate to a bigger one if decoding actually needs it.
       let result = null;
-      for (const maxDim of [1600, 3000]) {
+      for (const maxDim of [UPLOAD_MAX_DIM, 3000]) {
         const canvas = await loadScaledCanvas(file, maxDim);
+        if (maxDim === UPLOAD_MAX_DIM) scaledCanvasCache.set(file, canvas);
         const ctx = canvas.getContext("2d");
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         result = jsQR(imageData.data, canvas.width, canvas.height, { inversionAttempts: "attemptBoth" });
@@ -297,8 +306,8 @@
   }
 
   async function uploadPhoto(file, obec) {
-    const canvas = await loadScaledCanvas(file, 1600);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+    const canvas = scaledCanvasCache.get(file) || (await loadScaledCanvas(file, UPLOAD_MAX_DIM));
+    const dataUrl = canvas.toDataURL("image/jpeg", UPLOAD_JPEG_QUALITY);
     const dataBase64 = dataUrl.split(",")[1];
 
     const response = await fetch(UPLOAD_URL, {
@@ -377,11 +386,18 @@
 
     submitBtn.disabled = true;
     try {
-      for (let i = 0; i < photoInputs.length; i++) {
-        submitStatus.textContent = `Nahrávám fotky… (${i + 1}/${photoInputs.length})`;
-        const input = photoInputs[i];
-        data.photos[input.dataset.slotKey] = await uploadPhoto(input.files[0], obec);
-      }
+      let uploaded = 0;
+      submitStatus.textContent = `Nahrávám fotky… (0/${photoInputs.length})`;
+      // Uploaded in parallel — much faster than one at a time, and the Apps
+      // Script side is safe against the resulting concurrent requests.
+      await Promise.all(
+        photoInputs.map(async (input) => {
+          const fileId = await uploadPhoto(input.files[0], obec);
+          data.photos[input.dataset.slotKey] = fileId;
+          uploaded += 1;
+          submitStatus.textContent = `Nahrávám fotky… (${uploaded}/${photoInputs.length})`;
+        })
+      );
     } catch (err) {
       submitStatus.textContent = "";
       alert("Nahrávání fotek selhalo: " + err.message + ". Zkus to prosím znovu.");
