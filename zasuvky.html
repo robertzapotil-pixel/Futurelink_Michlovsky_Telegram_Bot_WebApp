@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nová zásuvka</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --text: var(--tg-theme-text-color, #111111);
+    --hint: var(--tg-theme-hint-color, #999999);
+    --link: var(--tg-theme-link-color, #2481cc);
+    --button: var(--tg-theme-button-color, #2481cc);
+    --button-text: var(--tg-theme-button-text-color, #ffffff);
+    --secondary-bg: var(--tg-theme-secondary-bg-color, #f0f0f0);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px;
+  }
+  h1 { font-size: 18px; margin: 0 0 16px; }
+  label { display: block; font-weight: 600; margin: 16px 0 6px; }
+  select, input[type="text"], input[type="file"] {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid var(--hint);
+    border-radius: 8px;
+    background: var(--secondary-bg);
+    color: var(--text);
+    font-size: 15px;
+  }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .hidden { display: none !important; }
+  .hint { color: var(--hint); font-size: 13px; margin-top: 4px; }
+  .status-ok { color: #2ecc71; }
+  .status-bad { color: #e74c3c; }
+  button#submit {
+    width: 100%;
+    margin-top: 24px;
+    padding: 14px;
+    border: none;
+    border-radius: 8px;
+    background: var(--button);
+    color: var(--button-text);
+    font-size: 16px;
+    font-weight: 600;
+  }
+  button#submit:disabled { opacity: 0.5; }
+</style>
+</head>
+<body>
+  <h1>Nová zásuvka</h1>
+
+  <label for="obec">Obec</label>
+  <select id="obec" required></select>
+
+  <label for="ulice">Ulice</label>
+  <input type="text" id="ulice" required />
+
+  <label for="cislo_typ">Typ čísla objektu</label>
+  <select id="cislo_typ">
+    <option>Číslo popisné</option>
+    <option>Číslo orientační</option>
+    <option>Číslo evidenční</option>
+    <option>Parcelní číslo</option>
+  </select>
+
+  <label for="cislo_hodnota">Číslo objektu</label>
+  <input type="text" id="cislo_hodnota" required />
+
+  <label for="kapacita">Kapacita kabelu</label>
+  <select id="kapacita">
+    <option>2 vl.</option><option>4 vl.</option><option>6 vl.</option>
+    <option>12 vl.</option><option>24 vl.</option><option>48 vl.</option>
+    <option>96 vl.</option><option>144 vl.</option><option>192 vl.</option>
+    <option>288 vl.</option>
+  </select>
+
+  <label for="typ_zakonceni">Typ zakončení</label>
+  <select id="typ_zakonceni">
+    <option>Jednozásuvka</option>
+    <option>Dvojzásuvka</option>
+    <option>Třízásuvka</option>
+    <option>Kabelová komora</option>
+    <option>Bábovka</option>
+    <option>Jiné</option>
+  </select>
+
+  <div id="jine_wrap" class="hidden">
+    <label for="jine_text">Popiš typ zakončení</label>
+    <input type="text" id="jine_text" />
+  </div>
+
+  <div id="barvy_wrap" class="hidden"></div>
+
+  <div id="umisteni_wrap">
+    <label for="umisteni">Umístění / místnost</label>
+    <select id="umisteni">
+      <option>Chodba</option><option>Sklep</option><option>Garáž</option>
+      <option>Kuchyň</option><option>Obývák</option><option>Technická místnost</option>
+      <option>Půda</option><option>Koupelna</option><option>Toaleta</option>
+      <option>Pokoj</option><option>Vlastní</option>
+    </select>
+    <div id="umisteni_vlastni_wrap" class="hidden">
+      <input type="text" id="umisteni_vlastni" placeholder="Napiš umístění" />
+    </div>
+  </div>
+
+  <div id="qr_wrap">
+    <label for="qr_file">Fotka QR kódu (jen pro přečtení, nikam se nenahrává)</label>
+    <input type="file" id="qr_file" accept="image/*" capture="environment" />
+    <div class="hint" id="qr_status">QR kód zatím nenačten.</div>
+    <label for="qr_manual">QR kód (uprav, pokud se nenačetl správně)</label>
+    <input type="text" id="qr_manual" />
+  </div>
+
+  <label>GPS poloha</label>
+  <div class="hint" id="gps_status">Hledám polohu…</div>
+
+  <button id="submit">Odeslat</button>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  tg?.ready();
+  tg?.expand();
+
+  const params = new URLSearchParams(location.search);
+  const obceList = (params.get("obce") || "").split("|").filter(Boolean);
+  const obecSelect = document.getElementById("obec");
+  obceList.forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    obecSelect.appendChild(opt);
+  });
+
+  const COLORS = ["Modrá", "Oranžová", "Zelená", "Hnědá", "Šedá", "Bílá",
+                  "Červená", "Černá", "Žlutá", "Fialová", "Růžová", "Tyrkysová"];
+  const PORT_COUNT = { "Jednozásuvka": 1, "Dvojzásuvka": 2, "Třízásuvka": 3 };
+  const KOMORA_TYPES = new Set(["Kabelová komora", "Bábovka"]);
+
+  const typZakonceniSelect = document.getElementById("typ_zakonceni");
+  const jineWrap = document.getElementById("jine_wrap");
+  const barvyWrap = document.getElementById("barvy_wrap");
+  const umisteniWrap = document.getElementById("umisteni_wrap");
+  const qrWrap = document.getElementById("qr_wrap");
+
+  function renderBarvySelects(count) {
+    barvyWrap.innerHTML = "";
+    for (let i = 1; i <= count; i++) {
+      const label = document.createElement("label");
+      label.textContent = `Barva vlákna – ${i}. port/zásuvku`;
+      const select = document.createElement("select");
+      select.className = "barva-select";
+      COLORS.forEach((c) => {
+        const opt = document.createElement("option");
+        opt.value = c;
+        opt.textContent = c;
+        select.appendChild(opt);
+      });
+      barvyWrap.appendChild(label);
+      barvyWrap.appendChild(select);
+    }
+  }
+
+  function updateFormForTyp() {
+    const typ = typZakonceniSelect.value;
+    jineWrap.classList.toggle("hidden", typ !== "Jiné");
+    barvyWrap.classList.toggle("hidden", !(typ in PORT_COUNT));
+    if (typ in PORT_COUNT) renderBarvySelects(PORT_COUNT[typ]);
+
+    const isKomora = KOMORA_TYPES.has(typ);
+    umisteniWrap.classList.toggle("hidden", isKomora);
+    qrWrap.classList.toggle("hidden", isKomora);
+  }
+  typZakonceniSelect.addEventListener("change", updateFormForTyp);
+  updateFormForTyp();
+
+  document.getElementById("umisteni").addEventListener("change", (e) => {
+    document.getElementById("umisteni_vlastni_wrap").classList.toggle("hidden", e.target.value !== "Vlastní");
+  });
+
+  // QR decode fully client-side — the image itself is never uploaded anywhere.
+  document.getElementById("qr_file").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    const status = document.getElementById("qr_status");
+    if (!file) return;
+    status.textContent = "Čtu QR kód…";
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const result = jsQR(imageData.data, imageData.width, imageData.height);
+      if (result) {
+        document.getElementById("qr_manual").value = result.data;
+        status.textContent = "QR kód přečten.";
+        status.className = "hint status-ok";
+      } else {
+        status.textContent = "Nepodařilo se přečíst, uprav prosím ručně níže.";
+        status.className = "hint status-bad";
+      }
+    };
+    img.src = URL.createObjectURL(file);
+  });
+
+  // GPS: watch continuously while filling the form, use the latest fix on submit.
+  // Not required to submit — matches the reference flow, which allows "GPS: neznámo".
+  let lastPosition = null;
+  const gpsStatus = document.getElementById("gps_status");
+  const submitBtn = document.getElementById("submit");
+
+  if (navigator.geolocation) {
+    navigator.geolocation.watchPosition(
+      (pos) => {
+        lastPosition = pos.coords;
+        gpsStatus.textContent = `Poloha nalezena (přesnost ~${Math.round(pos.coords.accuracy)} m)`;
+        gpsStatus.className = "hint status-ok";
+      },
+      () => {
+        gpsStatus.textContent = "Polohu se nepodařilo zjistit (bude uloženo jako neznámá).";
+        gpsStatus.className = "hint status-bad";
+      },
+      { enableHighAccuracy: true, maximumAge: 10000 }
+    );
+  } else {
+    gpsStatus.textContent = "Tento prohlížeč neumí zjistit polohu.";
+  }
+
+  submitBtn.addEventListener("click", () => {
+    const typ = typZakonceniSelect.value;
+    const barvy = Array.from(document.querySelectorAll(".barva-select")).map((s) => s.value);
+    const umisteni = document.getElementById("umisteni").value;
+    const umisteniVlastni = document.getElementById("umisteni_vlastni").value;
+
+    const data = {
+      obec: obecSelect.value,
+      ulice: document.getElementById("ulice").value,
+      cislo_typ: document.getElementById("cislo_typ").value,
+      cislo_hodnota: document.getElementById("cislo_hodnota").value,
+      kapacita: document.getElementById("kapacita").value,
+      typ_zakonceni: typ,
+      typ_zakonceni_popis: typ === "Jiné" ? document.getElementById("jine_text").value : "",
+      barvy: typ in PORT_COUNT ? barvy : [],
+      umisteni: KOMORA_TYPES.has(typ) ? "" : (umisteni === "Vlastní" ? umisteniVlastni : umisteni),
+      qr_kod: KOMORA_TYPES.has(typ) ? "" : document.getElementById("qr_manual").value,
+      gps: lastPosition ? { lat: lastPosition.latitude, lon: lastPosition.longitude } : null,
+    };
+
+    if (!data.obec || !data.ulice || !data.cislo_hodnota) {
+      alert("Vyplň prosím obec, ulici a číslo objektu.");
+      return;
+    }
+
+    tg.sendData(JSON.stringify(data));
+  });
+</script>
+</body>
+</html>
