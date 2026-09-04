@@ -27,6 +27,7 @@
     font-size: 15px;
   }
   h1 { font-size: 18px; margin: 0 0 16px; }
+  h2 { font-size: 15px; margin: 24px 0 4px; }
   label { display: block; font-weight: 600; margin: 16px 0 6px; }
   select, input[type="text"], input[type="file"] {
     width: 100%;
@@ -115,20 +116,20 @@
     </div>
   </div>
 
-  <div id="qr_wrap">
-    <label for="qr_file">Fotka QR kódu (jen pro přečtení, nikam se nenahrává)</label>
-    <input type="file" id="qr_file" accept="image/*" capture="environment" />
-    <div class="hint" id="qr_status">QR kód zatím nenačten.</div>
-    <label for="qr_manual">QR kód (uprav, pokud se nenačetl správně)</label>
-    <input type="text" id="qr_manual" />
-  </div>
+  <h2>Fotodokumentace</h2>
+  <div id="zasuvka_foto_wrap"></div>
+  <div id="komora_foto_wrap" class="hidden"></div>
 
   <label>GPS poloha</label>
   <div class="hint" id="gps_status">Hledám polohu…</div>
 
   <button id="submit">Odeslat</button>
+  <div class="hint" id="submit_status"></div>
 
 <script>
+  // Apps Script Web App that saves an uploaded photo to Drive and returns its fileId.
+  const UPLOAD_URL = "https://script.google.com/macros/s/AKfycby5aOfaJjORZCQ5gFtgSJ7ZFPnFc9qwacHYVxAQDOBeykc9wfMcnLrJ-dj2-loTzA3SrA/exec";
+
   const tg = window.Telegram?.WebApp;
   tg?.ready();
   tg?.expand();
@@ -148,11 +149,24 @@
   const PORT_COUNT = { "Jednozásuvka": 1, "Dvojzásuvka": 2, "Třízásuvka": 3 };
   const KOMORA_TYPES = new Set(["Kabelová komora", "Bábovka"]);
 
+  const ZASUVKA_PHOTO_SLOTS = [
+    { key: "foto_qr", label: "Foto zavřené zásuvky s QR kódem" },
+    { key: "foto_otevrene", label: "Foto otevřené zásuvky" },
+    { key: "foto_dalka", label: "Foto zásuvky z dálky" },
+    { key: "foto_objekt", label: "Foto objektu zvenku" },
+  ];
+  const KOMORA_PHOTO_SLOTS = [
+    { key: "komora_vnitrek", label: "Foto vnitřku kabelové komory / bábovky" },
+    { key: "komora_zavarene", label: "Foto zavařené bábovky / zavařené malé kabelové komory" },
+    { key: "komora_dalka", label: "Foto bábovky / kabelové komory z dálky" },
+  ];
+
   const typZakonceniSelect = document.getElementById("typ_zakonceni");
   const jineWrap = document.getElementById("jine_wrap");
   const barvyWrap = document.getElementById("barvy_wrap");
   const umisteniWrap = document.getElementById("umisteni_wrap");
-  const qrWrap = document.getElementById("qr_wrap");
+  const zasuvkaFotoWrap = document.getElementById("zasuvka_foto_wrap");
+  const komoraFotoWrap = document.getElementById("komora_foto_wrap");
 
   function renderBarvySelects(count) {
     barvyWrap.innerHTML = "";
@@ -172,6 +186,40 @@
     }
   }
 
+  function renderPhotoSlots(container, slots) {
+    container.innerHTML = "";
+    slots.forEach((slot) => {
+      const label = document.createElement("label");
+      label.textContent = slot.label;
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      input.capture = "environment";
+      input.dataset.slotKey = slot.key;
+      input.className = "photo-input";
+      container.appendChild(label);
+      container.appendChild(input);
+
+      if (slot.key === "foto_qr") {
+        const status = document.createElement("div");
+        status.className = "hint";
+        status.id = "qr_status";
+        status.textContent = "QR kód zatím nenačten.";
+        const qrLabel = document.createElement("label");
+        qrLabel.textContent = "QR kód (uprav, pokud se nenačetl správně)";
+        const qrManual = document.createElement("input");
+        qrManual.type = "text";
+        qrManual.id = "qr_manual";
+        container.appendChild(status);
+        container.appendChild(qrLabel);
+        container.appendChild(qrManual);
+        input.addEventListener("change", () => decodeQr(input.files[0]));
+      }
+    });
+  }
+  renderPhotoSlots(zasuvkaFotoWrap, ZASUVKA_PHOTO_SLOTS);
+  renderPhotoSlots(komoraFotoWrap, KOMORA_PHOTO_SLOTS);
+
   function updateFormForTyp() {
     const typ = typZakonceniSelect.value;
     jineWrap.classList.toggle("hidden", typ !== "Jiné");
@@ -180,7 +228,8 @@
 
     const isKomora = KOMORA_TYPES.has(typ);
     umisteniWrap.classList.toggle("hidden", isKomora);
-    qrWrap.classList.toggle("hidden", isKomora);
+    zasuvkaFotoWrap.classList.toggle("hidden", isKomora);
+    komoraFotoWrap.classList.toggle("hidden", !isKomora);
   }
   typZakonceniSelect.addEventListener("change", updateFormForTyp);
   updateFormForTyp();
@@ -189,73 +238,89 @@
     document.getElementById("umisteni_vlastni_wrap").classList.toggle("hidden", e.target.value !== "Vlastní");
   });
 
-  // QR decode fully client-side — the image itself is never uploaded anywhere.
-  document.getElementById("qr_file").addEventListener("change", (e) => {
-    const file = e.target.files[0];
+  // Downscale + re-encode as JPEG — smaller uploads, and canvas pixel data for QR decode.
+  function loadScaledCanvas(file, maxDim) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Nepodařilo se přečíst soubor."));
+      reader.onload = (ev) => {
+        const img = new Image();
+        img.onerror = () => reject(new Error("Nepodařilo se načíst fotku."));
+        img.onload = () => {
+          const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas);
+        };
+        img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // QR decode fully client-side; the image is uploaded separately (for documentation) below.
+  async function decodeQr(file) {
     const status = document.getElementById("qr_status");
     if (!file) return;
     status.textContent = "Čtu QR kód…";
     status.className = "hint";
 
     if (typeof jsQR !== "function") {
-      status.textContent = "Knihovna pro čtení QR se nenačetla. Zkontroluj připojení a zkus to znovu, nebo napiš kód ručně.";
+      status.textContent = "Knihovna pro čtení QR se nenačetla. Napiš kód ručně.";
       status.className = "hint status-bad";
       return;
     }
 
-    function tryDecode(ctx, w, h) {
-      const imageData = ctx.getImageData(0, 0, w, h);
-      return jsQR(imageData.data, w, h, { inversionAttempts: "attemptBoth" });
-    }
-
-    const img = new Image();
-    img.onerror = () => {
-      status.textContent = "Fotku se nepodařilo načíst. Zkus prosím jinou.";
-      status.className = "hint status-bad";
-    };
-    img.onload = () => {
-      try {
-        const canvas = document.createElement("canvas");
+    try {
+      let result = null;
+      for (const maxDim of [1600, 3000]) {
+        const canvas = await loadScaledCanvas(file, maxDim);
         const ctx = canvas.getContext("2d");
-        // Try a couple of scales: very high-res photos can be slow/fail, but a
-        // small QR relative to the frame needs enough resolution to decode.
-        let result = null;
-        for (const maxDim of [1600, 3000]) {
-          const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-          canvas.width = Math.round(img.width * scale);
-          canvas.height = Math.round(img.height * scale);
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          result = tryDecode(ctx, canvas.width, canvas.height);
-          if (result) break;
-        }
-        if (result) {
-          document.getElementById("qr_manual").value = result.data;
-          status.textContent = "QR kód přečten.";
-          status.className = "hint status-ok";
-        } else {
-          status.textContent = "Nepodařilo se přečíst, uprav prosím ručně níže.";
-          status.className = "hint status-bad";
-        }
-      } catch (err) {
-        status.textContent = "Nastala chyba při čtení QR kódu (" + err.message + "), uprav prosím ručně níže.";
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        result = jsQR(imageData.data, canvas.width, canvas.height, { inversionAttempts: "attemptBoth" });
+        if (result) break;
+      }
+      if (result) {
+        document.getElementById("qr_manual").value = result.data;
+        status.textContent = "QR kód přečten.";
+        status.className = "hint status-ok";
+      } else {
+        status.textContent = "Nepodařilo se přečíst, uprav prosím ručně výše.";
         status.className = "hint status-bad";
       }
-    };
-
-    const reader = new FileReader();
-    reader.onerror = () => {
-      status.textContent = "Fotku se nepodařilo přečíst ze zařízení.";
+    } catch (err) {
+      status.textContent = "Nastala chyba při čtení QR kódu (" + err.message + ").";
       status.className = "hint status-bad";
-    };
-    reader.onload = (ev) => { img.src = ev.target.result; };
-    reader.readAsDataURL(file);
-  });
+    }
+  }
+
+  async function uploadPhoto(file, obec) {
+    const canvas = await loadScaledCanvas(file, 1600);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+    const dataBase64 = dataUrl.split(",")[1];
+
+    const response = await fetch(UPLOAD_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" }, // avoids a CORS preflight
+      body: JSON.stringify({
+        obec, kategorie: "zasuvky", filename: file.name || "foto.jpg",
+        mimeType: "image/jpeg", dataBase64,
+      }),
+    });
+    if (!response.ok) throw new Error("Nahrávání selhalo (HTTP " + response.status + ")");
+    const result = await response.json();
+    if (!result.fileId) throw new Error("Nahrávání selhalo.");
+    return result.fileId;
+  }
 
   // GPS: watch continuously while filling the form, use the latest fix on submit.
   // Not required to submit — matches the reference flow, which allows "GPS: neznámo".
   let lastPosition = null;
   const gpsStatus = document.getElementById("gps_status");
   const submitBtn = document.getElementById("submit");
+  const submitStatus = document.getElementById("submit_status");
 
   if (navigator.geolocation) {
     navigator.geolocation.watchPosition(
@@ -274,14 +339,16 @@
     gpsStatus.textContent = "Tento prohlížeč neumí zjistit polohu.";
   }
 
-  submitBtn.addEventListener("click", () => {
+  submitBtn.addEventListener("click", async () => {
     const typ = typZakonceniSelect.value;
+    const isKomora = KOMORA_TYPES.has(typ);
     const barvy = Array.from(document.querySelectorAll(".barva-select")).map((s) => s.value);
     const umisteni = document.getElementById("umisteni").value;
     const umisteniVlastni = document.getElementById("umisteni_vlastni").value;
+    const obec = obecSelect.value;
 
     const data = {
-      obec: obecSelect.value,
+      obec,
       ulice: document.getElementById("ulice").value,
       cislo_typ: document.getElementById("cislo_typ").value,
       cislo_hodnota: document.getElementById("cislo_hodnota").value,
@@ -289,9 +356,10 @@
       typ_zakonceni: typ,
       typ_zakonceni_popis: typ === "Jiné" ? document.getElementById("jine_text").value : "",
       barvy: typ in PORT_COUNT ? barvy : [],
-      umisteni: KOMORA_TYPES.has(typ) ? "" : (umisteni === "Vlastní" ? umisteniVlastni : umisteni),
-      qr_kod: KOMORA_TYPES.has(typ) ? "" : document.getElementById("qr_manual").value,
+      umisteni: isKomora ? "" : (umisteni === "Vlastní" ? umisteniVlastni : umisteni),
+      qr_kod: isKomora ? "" : document.getElementById("qr_manual").value,
       gps: lastPosition ? { lat: lastPosition.latitude, lon: lastPosition.longitude } : null,
+      photos: {},
     };
 
     if (!data.obec || !data.ulice || !data.cislo_hodnota) {
@@ -299,6 +367,29 @@
       return;
     }
 
+    const activeWrap = isKomora ? komoraFotoWrap : zasuvkaFotoWrap;
+    const photoInputs = Array.from(activeWrap.querySelectorAll(".photo-input"));
+    const missing = photoInputs.filter((input) => !input.files[0]);
+    if (missing.length) {
+      alert("Vyfoť prosím všechny požadované fotky.");
+      return;
+    }
+
+    submitBtn.disabled = true;
+    try {
+      for (let i = 0; i < photoInputs.length; i++) {
+        submitStatus.textContent = `Nahrávám fotky… (${i + 1}/${photoInputs.length})`;
+        const input = photoInputs[i];
+        data.photos[input.dataset.slotKey] = await uploadPhoto(input.files[0], obec);
+      }
+    } catch (err) {
+      submitStatus.textContent = "";
+      alert("Nahrávání fotek selhalo: " + err.message + ". Zkus to prosím znovu.");
+      submitBtn.disabled = false;
+      return;
+    }
+
+    submitStatus.textContent = "Odesílám…";
     tg.sendData(JSON.stringify(data));
   });
 </script>
