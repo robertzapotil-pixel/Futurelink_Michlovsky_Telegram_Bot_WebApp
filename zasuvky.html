@@ -203,6 +203,11 @@
       return;
     }
 
+    function tryDecode(ctx, w, h) {
+      const imageData = ctx.getImageData(0, 0, w, h);
+      return jsQR(imageData.data, w, h, { inversionAttempts: "attemptBoth" });
+    }
+
     const img = new Image();
     img.onerror = () => {
       status.textContent = "Fotku se nepodařilo načíst. Zkus prosím jinou.";
@@ -210,16 +215,19 @@
     };
     img.onload = () => {
       try {
-        // Downscale huge phone-camera photos — large canvases are slow/unreliable on mobile.
-        const maxDim = 1600;
-        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
         const canvas = document.createElement("canvas");
-        canvas.width = Math.round(img.width * scale);
-        canvas.height = Math.round(img.height * scale);
         const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const result = jsQR(imageData.data, imageData.width, imageData.height);
+        // Try a couple of scales: very high-res photos can be slow/fail, but a
+        // small QR relative to the frame needs enough resolution to decode.
+        let result = null;
+        for (const maxDim of [1600, 3000]) {
+          const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          result = tryDecode(ctx, canvas.width, canvas.height);
+          if (result) break;
+        }
         if (result) {
           document.getElementById("qr_manual").value = result.data;
           status.textContent = "QR kód přečten.";
@@ -229,11 +237,18 @@
           status.className = "hint status-bad";
         }
       } catch (err) {
-        status.textContent = "Nastala chyba při čtení QR kódu, uprav prosím ručně níže.";
+        status.textContent = "Nastala chyba při čtení QR kódu (" + err.message + "), uprav prosím ručně níže.";
         status.className = "hint status-bad";
       }
     };
-    img.src = URL.createObjectURL(file);
+
+    const reader = new FileReader();
+    reader.onerror = () => {
+      status.textContent = "Fotku se nepodařilo přečíst ze zařízení.";
+      status.className = "hint status-bad";
+    };
+    reader.onload = (ev) => { img.src = ev.target.result; };
+    reader.readAsDataURL(file);
   });
 
   // GPS: watch continuously while filling the form, use the latest fix on submit.
