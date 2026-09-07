@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Metry záfuk</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --text: var(--tg-theme-text-color, #111111);
+    --hint: var(--tg-theme-hint-color, #999999);
+    --link: var(--tg-theme-link-color, #2481cc);
+    --button: var(--tg-theme-button-color, #2481cc);
+    --button-text: var(--tg-theme-button-text-color, #ffffff);
+    --secondary-bg: var(--tg-theme-secondary-bg-color, #f0f0f0);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px;
+  }
+  h1 { font-size: 18px; margin: 0 0 16px; }
+  label { display: block; font-weight: 600; margin: 16px 0 6px; }
+  select, input[type="text"], input[type="number"] {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid var(--hint);
+    border-radius: 8px;
+    background: var(--secondary-bg);
+    color: var(--text);
+    font-size: 15px;
+  }
+  .hint { color: var(--hint); font-size: 13px; margin-top: 4px; }
+  .status-ok { color: #2ecc71; }
+  .status-bad { color: #e74c3c; }
+  .result-box {
+    margin-top: 16px;
+    padding: 12px;
+    border-radius: 8px;
+    background: var(--secondary-bg);
+    font-size: 16px;
+    font-weight: 600;
+  }
+  button#submit {
+    width: 100%;
+    margin-top: 24px;
+    padding: 14px;
+    border: none;
+    border-radius: 8px;
+    background: var(--button);
+    color: var(--button-text);
+    font-size: 16px;
+    font-weight: 600;
+  }
+  button#submit:disabled { opacity: 0.5; }
+</style>
+</head>
+<body>
+  <h1>Metry záfuk</h1>
+
+  <label for="obec">Obec</label>
+  <select id="obec" required></select>
+
+  <label for="ulice">Ulice</label>
+  <input type="text" id="ulice" required />
+
+  <label for="cislo_typ">Typ čísla objektu</label>
+  <select id="cislo_typ" required>
+    <option value="" disabled selected>— vyber —</option>
+    <option>Číslo popisné</option>
+    <option>Číslo orientační</option>
+    <option>Číslo evidenční</option>
+    <option>Parcelní číslo</option>
+  </select>
+
+  <label for="cislo_hodnota">Číslo objektu</label>
+  <input type="text" id="cislo_hodnota" required />
+
+  <label for="typ_kabelu">Typ kabelu</label>
+  <select id="typ_kabelu" required>
+    <option value="" disabled selected>— vyber —</option>
+    <option>2 vl.</option>
+    <option>4 vl.</option>
+    <option>6 vl.</option>
+    <option>12 vl.</option>
+    <option>24 vl.</option>
+    <option>48 vl.</option>
+    <option>96 vl.</option>
+    <option>144 vl.</option>
+    <option>192 vl.</option>
+    <option>288 vl.</option>
+  </select>
+
+  <label for="zacatek_m">Začátek metrů</label>
+  <input type="number" id="zacatek_m" inputmode="decimal" step="0.01" required />
+
+  <label for="konec_m">Konec metrů</label>
+  <input type="number" id="konec_m" inputmode="decimal" step="0.01" required />
+
+  <div class="result-box" id="result_box">Výsledek: —</div>
+
+  <label>GPS poloha</label>
+  <div class="hint" id="gps_status">Hledám polohu…</div>
+
+  <label for="poznamka">Poznámka</label>
+  <input type="text" id="poznamka" placeholder="Nepovinné" />
+
+  <button id="submit">Odeslat</button>
+  <div class="hint" id="submit_status"></div>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  tg?.ready();
+  tg?.expand();
+
+  const params = new URLSearchParams(location.search);
+  const obceList = (params.get("obce") || "").split("|").filter(Boolean);
+  const obecSelect = document.getElementById("obec");
+  const obecPlaceholder = document.createElement("option");
+  obecPlaceholder.value = "";
+  obecPlaceholder.textContent = "— vyber —";
+  obecPlaceholder.disabled = true;
+  obecPlaceholder.selected = true;
+  obecSelect.appendChild(obecPlaceholder);
+  obceList.forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    obecSelect.appendChild(opt);
+  });
+
+  // Live výsledek = |začátek - konec|, shown as soon as both fields have a value.
+  const zacatekInput = document.getElementById("zacatek_m");
+  const konecInput = document.getElementById("konec_m");
+  const resultBox = document.getElementById("result_box");
+
+  function updateResult() {
+    const zacatek = parseFloat(zacatekInput.value);
+    const konec = parseFloat(konecInput.value);
+    if (Number.isFinite(zacatek) && Number.isFinite(konec)) {
+      resultBox.textContent = `Výsledek: ${Math.abs(zacatek - konec).toFixed(2)} m`;
+    } else {
+      resultBox.textContent = "Výsledek: —";
+    }
+  }
+  zacatekInput.addEventListener("input", updateResult);
+  konecInput.addEventListener("input", updateResult);
+
+  // GPS: watch continuously while filling the form, use the latest fix on submit.
+  // Not required to submit — matches the Zásuvky/Závrt flow ("GPS: neznámo").
+  let lastPosition = null;
+  const gpsStatus = document.getElementById("gps_status");
+  const submitBtn = document.getElementById("submit");
+  const submitStatus = document.getElementById("submit_status");
+
+  if (navigator.geolocation) {
+    navigator.geolocation.watchPosition(
+      (pos) => {
+        lastPosition = pos.coords;
+        gpsStatus.textContent = `Poloha nalezena (přesnost ~${Math.round(pos.coords.accuracy)} m)`;
+        gpsStatus.className = "hint status-ok";
+      },
+      () => {
+        gpsStatus.textContent = "Polohu se nepodařilo zjistit (bude uloženo jako neznámá).";
+        gpsStatus.className = "hint status-bad";
+      },
+      { enableHighAccuracy: true, maximumAge: 10000 }
+    );
+  } else {
+    gpsStatus.textContent = "Tento prohlížeč neumí zjistit polohu.";
+  }
+
+  submitBtn.addEventListener("click", () => {
+    const zacatek = parseFloat(zacatekInput.value);
+    const konec = parseFloat(konecInput.value);
+
+    const data = {
+      form: "metry_zafuk",
+      obec: obecSelect.value,
+      ulice: document.getElementById("ulice").value,
+      cislo_typ: document.getElementById("cislo_typ").value,
+      cislo_hodnota: document.getElementById("cislo_hodnota").value,
+      typ_kabelu: document.getElementById("typ_kabelu").value,
+      zacatek_m: zacatekInput.value,
+      konec_m: konecInput.value,
+      gps: lastPosition ? { lat: lastPosition.latitude, lon: lastPosition.longitude } : null,
+      poznamka: document.getElementById("poznamka").value,
+    };
+
+    const missingFields = [];
+    if (!data.obec) missingFields.push("Obec");
+    if (!data.ulice) missingFields.push("Ulice");
+    if (!data.cislo_typ) missingFields.push("Typ čísla objektu");
+    if (!data.cislo_hodnota) missingFields.push("Číslo objektu");
+    if (!data.typ_kabelu) missingFields.push("Typ kabelu");
+    if (!Number.isFinite(zacatek)) missingFields.push("Začátek metrů");
+    if (!Number.isFinite(konec)) missingFields.push("Konec metrů");
+
+    if (missingFields.length) {
+      alert("Vyplň prosím: " + missingFields.join(", "));
+      return;
+    }
+
+    submitBtn.disabled = true;
+    submitStatus.textContent = "Odesílám…";
+    tg.sendData(JSON.stringify(data));
+  });
+</script>
+</body>
+</html>
