@@ -148,7 +148,15 @@
 
   const COLORS = ["Modrá", "Oranžová", "Zelená", "Hnědá", "Šedá", "Bílá",
                   "Červená", "Černá", "Žlutá", "Fialová", "Růžová", "Tyrkysová"];
-  const PORT_COUNT = { "Jednozásuvka": 1, "Dvojzásuvka": 2, "Třízásuvka": 3 };
+  // Jednozásuvka is intentionally excluded — always fiber 1 / Modrá, no
+  // question asked. Position labels are orientation-agnostic (outlets are
+  // sometimes side by side, sometimes stacked) — the technician just picks
+  // whichever color is actually at that position.
+  const PORT_COUNT = { "Dvojzásuvka": 2, "Třízásuvka": 3 };
+  const POSITION_LABELS = {
+    2: ["1. pozice (vlevo/nahoře)", "2. pozice (vpravo/dole)"],
+    3: ["1. pozice (vlevo/nahoře)", "2. pozice (uprostřed)", "3. pozice (vpravo/dole)"],
+  };
   const KOMORA_TYPES = new Set(["Kabelová komora", "Bábovka"]);
 
   const ZASUVKA_PHOTO_SLOTS = [
@@ -172,9 +180,10 @@
 
   function renderBarvySelects(count) {
     barvyWrap.innerHTML = "";
-    for (let i = 1; i <= count; i++) {
+    const labels = POSITION_LABELS[count];
+    for (let i = 0; i < count; i++) {
       const label = document.createElement("label");
-      label.textContent = `Barva vlákna – ${i}. port/zásuvku`;
+      label.textContent = `Barva vlákna — ${labels[i]}`;
       const select = document.createElement("select");
       select.className = "barva-select";
       COLORS.forEach((c) => {
@@ -381,7 +390,7 @@
       kapacita: document.getElementById("kapacita").value,
       typ_zakonceni: typ,
       typ_zakonceni_popis: typ === "Jiné" ? document.getElementById("jine_text").value : "",
-      barvy: typ in PORT_COUNT ? barvy : [],
+      barvy: typ in PORT_COUNT ? barvy : (typ === "Jednozásuvka" ? ["Modrá"] : []),
       umisteni: isKomora ? "" : (umisteni === "Vlastní" ? umisteniVlastni : umisteni),
       qr_kod: isKomora ? "" : document.getElementById("qr_manual").value,
       gps: lastPosition ? { lat: lastPosition.latitude, lon: lastPosition.longitude } : null,
