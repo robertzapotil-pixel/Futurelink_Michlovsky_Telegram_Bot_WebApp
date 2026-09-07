@@ -195,10 +195,11 @@
       label.textContent = slot.label;
       const input = document.createElement("input");
       input.type = "file";
-      input.accept = "image/*";
-      // No `capture` attribute on purpose — lets the technician choose between
-      // taking a new photo or picking an existing one (e.g. shot earlier where
-      // there was no signal, like in a basement).
+      // Explicit MIME list (not the "image/*" wildcard) and no `capture`
+      // attribute — on some Telegram iOS versions "image/*" alone makes the
+      // WebView jump straight to the camera instead of offering the photo
+      // library too.
+      input.accept = "image/jpeg,image/png,image/heic,image/heif,image/webp";
       input.dataset.slotKey = slot.key;
       input.className = "photo-input";
       container.appendChild(label);
