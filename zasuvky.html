@@ -68,7 +68,8 @@
   <input type="text" id="ulice" required />
 
   <label for="cislo_typ">Typ čísla objektu</label>
-  <select id="cislo_typ">
+  <select id="cislo_typ" required>
+    <option value="" disabled selected>— vyber —</option>
     <option>Číslo popisné</option>
     <option>Číslo orientační</option>
     <option>Číslo evidenční</option>
@@ -78,8 +79,9 @@
   <label for="cislo_hodnota">Číslo objektu</label>
   <input type="text" id="cislo_hodnota" required />
 
-  <label for="kapacita">Kapacita kabelu</label>
-  <select id="kapacita">
+  <label for="kapacita">Typ kabelu</label>
+  <select id="kapacita" required>
+    <option value="" disabled selected>— vyber —</option>
     <option>2 vl.</option><option>4 vl.</option><option>6 vl.</option>
     <option>12 vl.</option><option>24 vl.</option><option>48 vl.</option>
     <option>96 vl.</option><option>144 vl.</option><option>192 vl.</option>
@@ -87,7 +89,8 @@
   </select>
 
   <label for="typ_zakonceni">Typ zakončení</label>
-  <select id="typ_zakonceni">
+  <select id="typ_zakonceni" required>
+    <option value="" disabled selected>— vyber —</option>
     <option>Jednozásuvka</option>
     <option>Dvojzásuvka</option>
     <option>Třízásuvka</option>
@@ -105,7 +108,8 @@
 
   <div id="umisteni_wrap">
     <label for="umisteni">Umístění / místnost</label>
-    <select id="umisteni">
+    <select id="umisteni" required>
+      <option value="" disabled selected>— vyber —</option>
       <option>Chodba</option><option>Sklep</option><option>Garáž</option>
       <option>Kuchyň</option><option>Obývák</option><option>Technická místnost</option>
       <option>Půda</option><option>Koupelna</option><option>Toaleta</option>
@@ -139,6 +143,12 @@
   const params = new URLSearchParams(location.search);
   const obceList = (params.get("obce") || "").split("|").filter(Boolean);
   const obecSelect = document.getElementById("obec");
+  const obecPlaceholder = document.createElement("option");
+  obecPlaceholder.value = "";
+  obecPlaceholder.textContent = "— vyber —";
+  obecPlaceholder.disabled = true;
+  obecPlaceholder.selected = true;
+  obecSelect.appendChild(obecPlaceholder);
   obceList.forEach((name) => {
     const opt = document.createElement("option");
     opt.value = name;
@@ -397,8 +407,17 @@
       photos: {},
     };
 
-    if (!data.obec || !data.ulice || !data.cislo_hodnota) {
-      alert("Vyplň prosím obec, ulici a číslo objektu.");
+    const missingFields = [];
+    if (!data.obec) missingFields.push("Obec");
+    if (!data.ulice) missingFields.push("Ulice");
+    if (!data.cislo_typ) missingFields.push("Typ čísla objektu");
+    if (!data.cislo_hodnota) missingFields.push("Číslo objektu");
+    if (!data.kapacita) missingFields.push("Typ kabelu");
+    if (!data.typ_zakonceni) missingFields.push("Typ zakončení");
+    if (!isKomora && !data.umisteni) missingFields.push("Umístění / místnost");
+
+    if (missingFields.length) {
+      alert("Vyplň prosím: " + missingFields.join(", "));
       return;
     }
 
