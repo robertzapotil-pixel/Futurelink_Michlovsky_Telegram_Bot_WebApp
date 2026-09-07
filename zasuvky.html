@@ -196,7 +196,9 @@
       const input = document.createElement("input");
       input.type = "file";
       input.accept = "image/*";
-      input.capture = "environment";
+      // No `capture` attribute on purpose — lets the technician choose between
+      // taking a new photo or picking an existing one (e.g. shot earlier where
+      // there was no signal, like in a basement).
       input.dataset.slotKey = slot.key;
       input.className = "photo-input";
       container.appendChild(label);
