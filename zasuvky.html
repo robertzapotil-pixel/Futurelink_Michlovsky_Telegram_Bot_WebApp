@@ -127,6 +127,9 @@
   <label>GPS poloha</label>
   <div class="hint" id="gps_status">Hledám polohu…</div>
 
+  <label for="poznamka">Poznámka</label>
+  <input type="text" id="poznamka" placeholder="Nepovinné" />
+
   <button id="submit">Odeslat</button>
   <div class="hint" id="submit_status"></div>
 
@@ -404,6 +407,7 @@
       umisteni: isKomora ? "" : (umisteni === "Vlastní" ? umisteniVlastni : umisteni),
       qr_kod: isKomora ? "" : document.getElementById("qr_manual").value,
       gps: lastPosition ? { lat: lastPosition.latitude, lon: lastPosition.longitude } : null,
+      poznamka: document.getElementById("poznamka").value,
       photos: {},
     };
 
