@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Plastová infrastruktura</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --text: var(--tg-theme-text-color, #111111);
+    --hint: var(--tg-theme-hint-color, #999999);
+    --link: var(--tg-theme-link-color, #2481cc);
+    --button: var(--tg-theme-button-color, #2481cc);
+    --button-text: var(--tg-theme-button-text-color, #ffffff);
+    --secondary-bg: var(--tg-theme-secondary-bg-color, #f0f0f0);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px;
+  }
+  h1 { font-size: 18px; margin: 0 0 16px; }
+  h2 { font-size: 15px; margin: 24px 0 4px; }
+  label { display: block; font-weight: 600; margin: 16px 0 6px; }
+  select, input[type="text"], input[type="file"] {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid var(--hint);
+    border-radius: 8px;
+    background: var(--secondary-bg);
+    color: var(--text);
+    font-size: 15px;
+  }
+  .hint { color: var(--hint); font-size: 13px; margin-top: 4px; }
+  .status-ok { color: #2ecc71; }
+  .status-bad { color: #e74c3c; }
+  button#submit {
+    width: 100%;
+    margin-top: 24px;
+    padding: 14px;
+    border: none;
+    border-radius: 8px;
+    background: var(--button);
+    color: var(--button-text);
+    font-size: 16px;
+    font-weight: 600;
+  }
+  button#submit:disabled { opacity: 0.5; }
+</style>
+</head>
+<body>
+  <h1>Plastová infrastruktura</h1>
+
+  <label for="obec">Obec</label>
+  <select id="obec" required></select>
+
+  <label for="typ">Typ</label>
+  <select id="typ" required>
+    <option value="" disabled selected>— vyber —</option>
+    <option>Výpich</option>
+    <option>T-matrix</option>
+    <option>Propojení MD</option>
+    <option>Ukončení MD</option>
+    <option>Propojení HDPE</option>
+    <option>Ukončení HDPE</option>
+    <option>Postavení rozvaděčů</option>
+  </select>
+
+  <h2>Fotodokumentace</h2>
+  <div id="foto_wrap"></div>
+
+  <label>GPS poloha</label>
+  <div class="hint" id="gps_status">Hledám polohu…</div>
+
+  <label for="poznamka">Poznámka</label>
+  <input type="text" id="poznamka" placeholder="Nepovinné" />
+
+  <button id="submit">Odeslat</button>
+  <div class="hint" id="submit_status"></div>
+
+<script>
+  // Apps Script Web App that saves an uploaded photo to Drive and returns its fileId.
+  const UPLOAD_URL = "https://script.google.com/macros/s/AKfycby5aOfaJjORZCQ5gFtgSJ7ZFPnFc9qwacHYVxAQDOBeykc9wfMcnLrJ-dj2-loTzA3SrA/exec";
+  const UPLOAD_MAX_DIM = 1280; // smaller upload = faster; still plenty for documentation photos
+  const UPLOAD_JPEG_QUALITY = 0.7;
+  const PHOTO_ACCEPT = "image/jpeg,image/png,image/heic,image/heif,image/webp";
+
+  const tg = window.Telegram?.WebApp;
+  tg?.ready();
+  tg?.expand();
+
+  const params = new URLSearchParams(location.search);
+  const obceList = (params.get("obce") || "").split("|").filter(Boolean);
+  const obecSelect = document.getElementById("obec");
+  const obecPlaceholder = document.createElement("option");
+  obecPlaceholder.value = "";
+  obecPlaceholder.textContent = "— vyber —";
+  obecPlaceholder.disabled = true;
+  obecPlaceholder.selected = true;
+  obecSelect.appendChild(obecPlaceholder);
+  obceList.forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    obecSelect.appendChild(opt);
+  });
+
+  // Placeholder: one generic required photo per type until the exact
+  // per-type shot list is specified (see CLAUDE.md > Omezení agenta). Must
+  // stay in sync with PHOTO_SLOTS_BY_TYPE in forms/plastova_infrastruktura.py.
+  // Once the real list arrives, just extend each type's array here — the
+  // rendering/validation logic below already re-runs per selected type.
+  const PHOTO_SLOTS_BY_TYPE = {
+    "Výpich": [{ key: "foto_1", label: "Foto" }],
+    "T-matrix": [{ key: "foto_1", label: "Foto" }],
+    "Propojení MD": [{ key: "foto_1", label: "Foto" }],
+    "Ukončení MD": [{ key: "foto_1", label: "Foto" }],
+    "Propojení HDPE": [{ key: "foto_1", label: "Foto" }],
+    "Ukončení HDPE": [{ key: "foto_1", label: "Foto" }],
+    "Postavení rozvaděčů": [{ key: "foto_1", label: "Foto" }],
+  };
+
+  const typSelect = document.getElementById("typ");
+  const fotoWrap = document.getElementById("foto_wrap");
+
+  function renderPhotoSlots() {
+    fotoWrap.innerHTML = "";
+    const slots = PHOTO_SLOTS_BY_TYPE[typSelect.value] || [];
+    slots.forEach((slot) => {
+      const label = document.createElement("label");
+      label.textContent = slot.label;
+      const input = document.createElement("input");
+      input.type = "file";
+      // Explicit MIME list (not the "image/*" wildcard) and no `capture`
+      // attribute — on some Telegram iOS versions "image/*" alone makes the
+      // WebView jump straight to the camera instead of offering the photo
+      // library too.
+      input.accept = PHOTO_ACCEPT;
+      input.dataset.slotKey = slot.key;
+      input.className = "photo-input";
+      fotoWrap.appendChild(label);
+      fotoWrap.appendChild(input);
+    });
+  }
+  typSelect.addEventListener("change", renderPhotoSlots);
+
+  // Downscale + re-encode as JPEG — smaller uploads.
+  function loadScaledCanvas(file, maxDim) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Nepodařilo se přečíst soubor."));
+      reader.onload = (ev) => {
+        const img = new Image();
+        img.onerror = () => reject(new Error("Nepodařilo se načíst fotku."));
+        img.onload = () => {
+          const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas);
+        };
+        img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function uploadPhoto(file, obec) {
+    const canvas = await loadScaledCanvas(file, UPLOAD_MAX_DIM);
+    const dataUrl = canvas.toDataURL("image/jpeg", UPLOAD_JPEG_QUALITY);
+    const dataBase64 = dataUrl.split(",")[1];
+
+    const response = await fetch(UPLOAD_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" }, // avoids a CORS preflight
+      body: JSON.stringify({
+        obec, kategorie: "plastova_infrastruktura", filename: file.name || "foto.jpg",
+        mimeType: "image/jpeg", dataBase64,
+      }),
+    });
+    if (!response.ok) throw new Error("Nahrávání selhalo (HTTP " + response.status + ")");
+    const result = await response.json();
+    if (!result.fileId) throw new Error("Nahrávání selhalo.");
+    return result.fileId;
+  }
+
+  // GPS: watch continuously while filling the form, use the latest fix on submit.
+  // Not required to submit — matches the Zásuvky flow, which allows "GPS: neznámo".
+  let lastPosition = null;
+  const gpsStatus = document.getElementById("gps_status");
+  const submitBtn = document.getElementById("submit");
+  const submitStatus = document.getElementById("submit_status");
+
+  if (navigator.geolocation) {
+    navigator.geolocation.watchPosition(
+      (pos) => {
+        lastPosition = pos.coords;
+        gpsStatus.textContent = `Poloha nalezena (přesnost ~${Math.round(pos.coords.accuracy)} m)`;
+        gpsStatus.className = "hint status-ok";
+      },
+      () => {
+        gpsStatus.textContent = "Polohu se nepodařilo zjistit (bude uloženo jako neznámá).";
+        gpsStatus.className = "hint status-bad";
+      },
+      { enableHighAccuracy: true, maximumAge: 10000 }
+    );
+  } else {
+    gpsStatus.textContent = "Tento prohlížeč neumí zjistit polohu.";
+  }
+
+  submitBtn.addEventListener("click", async () => {
+    const obec = obecSelect.value;
+    const typ = typSelect.value;
+
+    const data = {
+      form: "plastova_infrastruktura",
+      obec,
+      typ,
+      gps: lastPosition ? { lat: lastPosition.latitude, lon: lastPosition.longitude } : null,
+      poznamka: document.getElementById("poznamka").value,
+      photos: {},
+    };
+
+    const missingFields = [];
+    if (!data.obec) missingFields.push("Obec");
+    if (!data.typ) missingFields.push("Typ");
+    if (missingFields.length) {
+      alert("Vyplň prosím: " + missingFields.join(", "));
+      return;
+    }
+
+    const requiredInputs = Array.from(fotoWrap.querySelectorAll(".photo-input"));
+    const missingPhotos = requiredInputs.filter((input) => !input.files[0]);
+    if (missingPhotos.length) {
+      alert("Vyfoť prosím všechny požadované fotky.");
+      return;
+    }
+
+    submitBtn.disabled = true;
+    try {
+      let uploaded = 0;
+      const total = requiredInputs.length;
+      submitStatus.textContent = `Nahrávám fotky… (0/${total})`;
+      // Uploaded in parallel — much faster than one at a time, and the Apps
+      // Script side is safe against the resulting concurrent requests.
+      await Promise.all(
+        requiredInputs.map(async (input) => {
+          const fileId = await uploadPhoto(input.files[0], obec);
+          data.photos[input.dataset.slotKey] = fileId;
+          uploaded += 1;
+          submitStatus.textContent = `Nahrávám fotky… (${uploaded}/${total})`;
+        })
+      );
+    } catch (err) {
+      submitStatus.textContent = "";
+      alert("Nahrávání fotek selhalo: " + err.message + ". Zkus to prosím znovu.");
+      submitBtn.disabled = false;
+      return;
+    }
+
+    submitStatus.textContent = "Odesílám…";
+    tg.sendData(JSON.stringify(data));
+  });
+</script>
+</body>
+</html>
