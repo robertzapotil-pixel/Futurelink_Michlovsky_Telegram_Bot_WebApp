@@ -152,7 +152,7 @@
   // checks it). Steps: text / select (input fields, sent under their `key`;
   // `required` blocks submit), photo (required), gps (button that saves the
   // position on the spot), extra (optional "Foto jiné").
-  // The five types using PLACEHOLDER_STEPS* are still waiting for their real shot list.
+  // The four types using PLACEHOLDER_STEPS are still waiting for their real shot list.
   const NOTE_STEP = { kind: "text", key: "poznamka", label: "Poznámka", placeholder: "Nepovinné" };
 
   // Object identification from the project documentation (PD); only some types have it.
@@ -173,12 +173,6 @@
   ];
 
   const PLACEHOLDER_STEPS = [
-    { kind: "photo", key: "foto_1", label: "Foto" },
-    { kind: "gps", label: "Lokalizovat GPS souřadnici" },
-    NOTE_STEP,
-  ];
-
-  const PLACEHOLDER_STEPS_WITH_EXTRA = [
     { kind: "photo", key: "foto_1", label: "Foto" },
     { kind: "gps", label: "Lokalizovat GPS souřadnici" },
     { kind: "extra" },
@@ -205,11 +199,16 @@
       { kind: "extra" },
       NOTE_STEP,
     ],
-    "Propojení MD": PLACEHOLDER_STEPS_WITH_EXTRA,
-    "Ukončení MD": PLACEHOLDER_STEPS_WITH_EXTRA,
-    "Propojení HDPE": PLACEHOLDER_STEPS_WITH_EXTRA,
-    "Ukončení HDPE": PLACEHOLDER_STEPS_WITH_EXTRA,
-    "Postavení rozvaděčů": PLACEHOLDER_STEPS,
+    "Propojení MD": PLACEHOLDER_STEPS,
+    "Ukončení MD": PLACEHOLDER_STEPS,
+    "Propojení HDPE": PLACEHOLDER_STEPS,
+    "Ukončení HDPE": PLACEHOLDER_STEPS,
+    "Postavení rozvaděčů": [
+      { kind: "text", key: "nazev_rozvadece", label: "Název rozvaděče", required: true },
+      { kind: "photo", key: "foto_rozvadec", label: "Foto postaveného rozvaděče" },
+      { kind: "gps", label: "Vybrat GPS souřadnice" },
+      NOTE_STEP,
+    ],
   };
 
   const typSelect = document.getElementById("typ");
