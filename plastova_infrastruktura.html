@@ -26,7 +26,6 @@
     font-size: 15px;
   }
   h1 { font-size: 18px; margin: 0 0 16px; }
-  h2 { font-size: 15px; margin: 24px 0 4px; }
   label { display: block; font-weight: 600; margin: 16px 0 6px; }
   select, input[type="text"], input[type="file"] {
     width: 100%;
@@ -40,6 +39,37 @@
   .hint { color: var(--hint); font-size: 13px; margin-top: 4px; }
   .status-ok { color: #2ecc71; }
   .status-bad { color: #e74c3c; }
+  .extra-photo-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .extra-photo-row input[type="file"] { flex: 1; }
+  button.remove-extra {
+    flex: 0 0 auto;
+    padding: 10px 12px;
+    border: 1px solid var(--hint);
+    border-radius: 8px;
+    background: var(--secondary-bg);
+    color: var(--text);
+  }
+  button.add-extra {
+    margin-top: 12px;
+    padding: 10px 14px;
+    border: 1px dashed var(--hint);
+    border-radius: 8px;
+    background: none;
+    color: var(--link);
+    font-size: 14px;
+  }
+  button.gps-btn {
+    width: 100%;
+    margin-top: 16px;
+    padding: 12px;
+    border: 1px solid var(--button);
+    border-radius: 8px;
+    background: none;
+    color: var(--button);
+    font-size: 15px;
+    font-weight: 600;
+  }
+  button.gps-btn:disabled { opacity: 0.5; }
   button#submit {
     width: 100%;
     margin-top: 24px;
@@ -72,14 +102,7 @@
     <option>Postavení rozvaděčů</option>
   </select>
 
-  <h2>Fotodokumentace</h2>
-  <div id="foto_wrap"></div>
-
-  <label>GPS poloha</label>
-  <div class="hint" id="gps_status">Hledám polohu…</div>
-
-  <label for="poznamka">Poznámka</label>
-  <input type="text" id="poznamka" placeholder="Nepovinné" />
+  <div id="steps_wrap"></div>
 
   <button id="submit">Odeslat</button>
   <div class="hint" id="submit_status"></div>
@@ -90,6 +113,7 @@
   const UPLOAD_MAX_DIM = 1280; // smaller upload = faster; still plenty for documentation photos
   const UPLOAD_JPEG_QUALITY = 0.7;
   const PHOTO_ACCEPT = "image/jpeg,image/png,image/heic,image/heif,image/webp";
+  const MAX_TOTAL_PHOTOS = 10; // Telegram media group limit
 
   const tg = window.Telegram?.WebApp;
   tg?.ready();
@@ -111,44 +135,199 @@
     obecSelect.appendChild(opt);
   });
 
-  // Placeholder: one generic required photo per type until the exact
-  // per-type shot list is specified (see CLAUDE.md > Omezení agenta). Must
-  // stay in sync with PHOTO_SLOTS_BY_TYPE in forms/plastova_infrastruktura.py.
-  // Once the real list arrives, just extend each type's array here — the
-  // rendering/validation logic below already re-runs per selected type.
-  const PHOTO_SLOTS_BY_TYPE = {
-    "Výpich": [{ key: "foto_1", label: "Foto" }],
-    "T-matrix": [{ key: "foto_1", label: "Foto" }],
-    "Propojení MD": [{ key: "foto_1", label: "Foto" }],
-    "Ukončení MD": [{ key: "foto_1", label: "Foto" }],
-    "Propojení HDPE": [{ key: "foto_1", label: "Foto" }],
-    "Ukončení HDPE": [{ key: "foto_1", label: "Foto" }],
-    "Postavení rozvaděčů": [{ key: "foto_1", label: "Foto" }],
+  // Ordered steps per type; the form renders exactly this sequence. Photo
+  // `key`s must stay in sync with PHOTO_SLOTS_BY_TYPE in
+  // forms/plastova_infrastruktura.py (tests/test_plastova_infrastruktura.py
+  // checks it). Steps: photo (required), gps (button that saves the position
+  // on the spot), extra (optional "Foto jiné"), note (free text).
+  // The five types below PLACEHOLDER_STEPS are still waiting for their real shot list.
+  const PLACEHOLDER_STEPS = [
+    { kind: "photo", key: "foto_1", label: "Foto" },
+    { kind: "gps", label: "Lokalizovat GPS souřadnici" },
+    { kind: "note" },
+  ];
+
+  const FORM_STEPS_BY_TYPE = {
+    "Výpich": [
+      { kind: "photo", key: "foto_zblizka", label: "Foto výpichu zblízka" },
+      { kind: "gps", label: "Lokalizovat GPS souřadnici" },
+      { kind: "photo", key: "foto_z_dalky", label: "Foto výpichu z dálky (okolí a umístění v terénu)" },
+      { kind: "photo", key: "foto_dum", label: "Foto domu / čísla popisného" },
+      { kind: "extra" },
+      { kind: "note" },
+    ],
+    "T-matrix": [
+      { kind: "photo", key: "foto_otevreny", label: "Foto otevřeného matrixu se spojkováním" },
+      { kind: "gps", label: "Vybrat GPS souřadnice" },
+      { kind: "photo", key: "foto_zavreny", label: "Foto zavřeného matrixu" },
+      { kind: "photo", key: "foto_z_dalky", label: "Foto z dálky (umístění matrixu v terénu / výkopu)" },
+      { kind: "photo", key: "foto_dum", label: "Foto domu / čísla popisného" },
+      { kind: "extra" },
+      { kind: "note" },
+    ],
+    "Propojení MD": PLACEHOLDER_STEPS,
+    "Ukončení MD": PLACEHOLDER_STEPS,
+    "Propojení HDPE": PLACEHOLDER_STEPS,
+    "Ukončení HDPE": PLACEHOLDER_STEPS,
+    "Postavení rozvaděčů": PLACEHOLDER_STEPS,
   };
 
   const typSelect = document.getElementById("typ");
-  const fotoWrap = document.getElementById("foto_wrap");
+  const stepsWrap = document.getElementById("steps_wrap");
+  const submitBtn = document.getElementById("submit");
+  const submitStatus = document.getElementById("submit_status");
 
-  function renderPhotoSlots() {
-    fotoWrap.innerHTML = "";
-    const slots = PHOTO_SLOTS_BY_TYPE[typSelect.value] || [];
-    slots.forEach((slot) => {
-      const label = document.createElement("label");
-      label.textContent = slot.label;
-      const input = document.createElement("input");
-      input.type = "file";
-      // Explicit MIME list (not the "image/*" wildcard) and no `capture`
-      // attribute — on some Telegram iOS versions "image/*" alone makes the
-      // WebView jump straight to the camera instead of offering the photo
-      // library too.
-      input.accept = PHOTO_ACCEPT;
-      input.dataset.slotKey = slot.key;
-      input.className = "photo-input";
-      fotoWrap.appendChild(label);
-      fotoWrap.appendChild(input);
+  // GPS: a fix saved with the button (lockedPosition) wins over the background
+  // one (lastPosition, kept warm by watchPosition) so the coordinates stay at
+  // the spot even if the technician walks away for the far-away photo.
+  // Never blocks submit — no fix means "GPS: neznámo", like the other forms.
+  let lockedPosition = null;
+  let lastPosition = null;
+  let gpsFailed = false;
+  let gpsStatusEl = null;
+  let extraPhotosWrap = null;
+
+  function renderGpsStatus() {
+    if (!gpsStatusEl) return;
+    if (lockedPosition) {
+      gpsStatusEl.textContent = `Poloha uložena (přesnost ~${Math.round(lockedPosition.accuracy)} m).`;
+      gpsStatusEl.className = "hint status-ok";
+    } else if (lastPosition) {
+      gpsStatusEl.textContent =
+        "Klepni na tlačítko přímo na místě. Jinak se při odeslání použije aktuální poloha " +
+        `(přesnost ~${Math.round(lastPosition.accuracy)} m).`;
+      gpsStatusEl.className = "hint";
+    } else if (gpsFailed) {
+      gpsStatusEl.textContent = "Polohu se nepodařilo zjistit (bude uloženo jako neznámá).";
+      gpsStatusEl.className = "hint status-bad";
+    } else {
+      gpsStatusEl.textContent = "Hledám polohu…";
+      gpsStatusEl.className = "hint";
+    }
+  }
+
+  if (navigator.geolocation) {
+    navigator.geolocation.watchPosition(
+      (pos) => { lastPosition = pos.coords; gpsFailed = false; renderGpsStatus(); },
+      () => { gpsFailed = true; renderGpsStatus(); },
+      { enableHighAccuracy: true, maximumAge: 10000 }
+    );
+  } else {
+    gpsFailed = true;
+  }
+
+  function lockPosition(btn) {
+    if (!navigator.geolocation) {
+      alert("Tento prohlížeč neumí zjistit polohu.");
+      return;
+    }
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Zjišťuji polohu…";
+    const finish = () => {
+      btn.disabled = false;
+      btn.textContent = originalText;
+      renderGpsStatus();
+    };
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { lockedPosition = pos.coords; finish(); },
+      () => { alert("Polohu se nepodařilo zjistit. Zkus to prosím znovu."); finish(); },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+    );
+  }
+
+  function makeLabel(text) {
+    const label = document.createElement("label");
+    label.textContent = text;
+    return label;
+  }
+
+  function makeFileInput(className) {
+    const input = document.createElement("input");
+    input.type = "file";
+    // Explicit MIME list (not the "image/*" wildcard) and no `capture`
+    // attribute — on some Telegram iOS versions "image/*" alone makes the
+    // WebView jump straight to the camera instead of offering the photo
+    // library too.
+    input.accept = PHOTO_ACCEPT;
+    input.className = className;
+    return input;
+  }
+
+  function renderPhotoStep(step) {
+    const input = makeFileInput("photo-input");
+    input.dataset.slotKey = step.key;
+    input.dataset.label = step.label;
+    stepsWrap.appendChild(makeLabel(step.label));
+    stepsWrap.appendChild(input);
+  }
+
+  function renderGpsStep(step) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "gps-btn";
+    btn.textContent = step.label;
+    btn.addEventListener("click", () => lockPosition(btn));
+    gpsStatusEl = document.createElement("div");
+    stepsWrap.appendChild(btn);
+    stepsWrap.appendChild(gpsStatusEl);
+    renderGpsStatus();
+  }
+
+  // "Foto jiné" — unlimited (up to the album cap) optional extra photos, each
+  // its own file input added on demand, numbered on submit.
+  function renderExtraStep() {
+    const wrap = document.createElement("div");
+    extraPhotosWrap = wrap;
+
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "add-extra";
+    addBtn.textContent = "+ Přidat fotku";
+    addBtn.addEventListener("click", () => {
+      const requiredCount = stepsWrap.querySelectorAll(".photo-input").length;
+      if (requiredCount + wrap.children.length >= MAX_TOTAL_PHOTOS) {
+        alert(`Na jedno odeslání je maximum ${MAX_TOTAL_PHOTOS} fotek.`);
+        return;
+      }
+      const row = document.createElement("div");
+      row.className = "extra-photo-row";
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "remove-extra";
+      removeBtn.textContent = "✕";
+      removeBtn.addEventListener("click", () => row.remove());
+      row.appendChild(makeFileInput("extra-photo-input"));
+      row.appendChild(removeBtn);
+      wrap.appendChild(row);
+    });
+
+    stepsWrap.appendChild(makeLabel("Foto jiné (nepovinné)"));
+    stepsWrap.appendChild(wrap);
+    stepsWrap.appendChild(addBtn);
+  }
+
+  function renderNoteStep() {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.id = "poznamka";
+    input.placeholder = "Nepovinné";
+    stepsWrap.appendChild(makeLabel("Poznámka"));
+    stepsWrap.appendChild(input);
+  }
+
+  function renderSteps() {
+    stepsWrap.innerHTML = "";
+    gpsStatusEl = null;
+    extraPhotosWrap = null;
+    (FORM_STEPS_BY_TYPE[typSelect.value] || []).forEach((step) => {
+      if (step.kind === "photo") renderPhotoStep(step);
+      else if (step.kind === "gps") renderGpsStep(step);
+      else if (step.kind === "extra") renderExtraStep();
+      else if (step.kind === "note") renderNoteStep();
     });
   }
-  typSelect.addEventListener("change", renderPhotoSlots);
+  typSelect.addEventListener("change", renderSteps);
 
   // Downscale + re-encode as JPEG — smaller uploads.
   function loadScaledCanvas(file, maxDim) {
@@ -191,40 +370,17 @@
     return result.fileId;
   }
 
-  // GPS: watch continuously while filling the form, use the latest fix on submit.
-  // Not required to submit — matches the Zásuvky flow, which allows "GPS: neznámo".
-  let lastPosition = null;
-  const gpsStatus = document.getElementById("gps_status");
-  const submitBtn = document.getElementById("submit");
-  const submitStatus = document.getElementById("submit_status");
-
-  if (navigator.geolocation) {
-    navigator.geolocation.watchPosition(
-      (pos) => {
-        lastPosition = pos.coords;
-        gpsStatus.textContent = `Poloha nalezena (přesnost ~${Math.round(pos.coords.accuracy)} m)`;
-        gpsStatus.className = "hint status-ok";
-      },
-      () => {
-        gpsStatus.textContent = "Polohu se nepodařilo zjistit (bude uloženo jako neznámá).";
-        gpsStatus.className = "hint status-bad";
-      },
-      { enableHighAccuracy: true, maximumAge: 10000 }
-    );
-  } else {
-    gpsStatus.textContent = "Tento prohlížeč neumí zjistit polohu.";
-  }
-
   submitBtn.addEventListener("click", async () => {
     const obec = obecSelect.value;
     const typ = typSelect.value;
+    const pos = lockedPosition || lastPosition;
 
     const data = {
       form: "plastova_infrastruktura",
       obec,
       typ,
-      gps: lastPosition ? { lat: lastPosition.latitude, lon: lastPosition.longitude } : null,
-      poznamka: document.getElementById("poznamka").value,
+      gps: pos ? { lat: pos.latitude, lon: pos.longitude } : null,
+      poznamka: document.getElementById("poznamka")?.value || "",
       photos: {},
     };
 
@@ -236,28 +392,38 @@
       return;
     }
 
-    const requiredInputs = Array.from(fotoWrap.querySelectorAll(".photo-input"));
+    const requiredInputs = Array.from(stepsWrap.querySelectorAll(".photo-input"));
     const missingPhotos = requiredInputs.filter((input) => !input.files[0]);
     if (missingPhotos.length) {
-      alert("Vyfoť prosím všechny požadované fotky.");
+      alert("Chybí fotka: " + missingPhotos.map((input) => input.dataset.label).join("; "));
       return;
     }
+
+    const extraInputs = extraPhotosWrap
+      ? Array.from(extraPhotosWrap.querySelectorAll(".extra-photo-input")).filter((input) => input.files[0])
+      : [];
 
     submitBtn.disabled = true;
     try {
       let uploaded = 0;
-      const total = requiredInputs.length;
+      const total = requiredInputs.length + extraInputs.length;
       submitStatus.textContent = `Nahrávám fotky… (0/${total})`;
+      const upload = async (input, key) => {
+        const fileId = await uploadPhoto(input.files[0], obec);
+        uploaded += 1;
+        submitStatus.textContent = `Nahrávám fotky… (${uploaded}/${total})`;
+        return [key, fileId];
+      };
       // Uploaded in parallel — much faster than one at a time, and the Apps
       // Script side is safe against the resulting concurrent requests.
-      await Promise.all(
-        requiredInputs.map(async (input) => {
-          const fileId = await uploadPhoto(input.files[0], obec);
-          data.photos[input.dataset.slotKey] = fileId;
-          uploaded += 1;
-          submitStatus.textContent = `Nahrávám fotky… (${uploaded}/${total})`;
-        })
-      );
+      // Promise.all keeps the array order, so the photos end up in the album
+      // in form order (required ones first, then extras) regardless of which
+      // upload finishes first.
+      const entries = await Promise.all([
+        ...requiredInputs.map((input) => upload(input, input.dataset.slotKey)),
+        ...extraInputs.map((input, i) => upload(input, `foto_jine_${i + 1}`)),
+      ]);
+      entries.forEach(([key, fileId]) => { data.photos[key] = fileId; });
     } catch (err) {
       submitStatus.textContent = "";
       alert("Nahrávání fotek selhalo: " + err.message + ". Zkus to prosím znovu.");
