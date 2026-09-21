@@ -58,6 +58,17 @@
     color: var(--link);
     font-size: 14px;
   }
+  .input-with-key { display: flex; gap: 8px; }
+  .input-with-key input { flex: 1; min-width: 0; }
+  button.slash-key {
+    flex: 0 0 56px;
+    border: 1px solid var(--button);
+    border-radius: 8px;
+    background: none;
+    color: var(--button);
+    font-size: 22px;
+    font-weight: 700;
+  }
   button.gps-btn {
     width: 100%;
     margin-top: 16px;
@@ -151,7 +162,14 @@
       kind: "select", key: "cislo_typ", label: "Typ čísla", required: true,
       options: ["Číslo popisné", "Číslo evidenční", "Parcelní číslo", "Číslo bodu"],
     },
-    { kind: "text", key: "cislo_hodnota", label: "Číslo (z PD)", required: true },
+    {
+      // Numeric keypad for the number types that are digits (+ "/"); parcel
+      // numbers ("st. 12/3") and point numbers may contain letters, so they
+      // keep the full keyboard. The on-screen "/" key exists because mobile
+      // numeric keypads have no slash.
+      kind: "text", key: "cislo_hodnota", label: "Číslo (z PD)", required: true, slashKey: true,
+      numericWhen: { key: "cislo_typ", values: ["Číslo popisné", "Číslo evidenční"] },
+    },
   ];
 
   const PLACEHOLDER_STEPS = [
@@ -347,8 +365,43 @@
     input.dataset.fieldKey = step.key;
     input.dataset.label = step.label;
     if (step.required) input.dataset.required = "1";
+    if (step.numericWhen) input.dataset.numericWhen = JSON.stringify(step.numericWhen);
     stepsWrap.appendChild(makeLabel(step.label));
-    stepsWrap.appendChild(input);
+    if (step.slashKey) {
+      const row = document.createElement("div");
+      row.className = "input-with-key";
+      const slashBtn = document.createElement("button");
+      slashBtn.type = "button";
+      slashBtn.className = "slash-key";
+      slashBtn.textContent = "/";
+      slashBtn.setAttribute("aria-label", "Vložit lomítko");
+      slashBtn.addEventListener("mousedown", (e) => e.preventDefault()); // keep focus (and keyboard) on the input
+      slashBtn.addEventListener("click", () => {
+        const start = input.selectionStart ?? input.value.length;
+        const end = input.selectionEnd ?? start;
+        input.value = input.value.slice(0, start) + "/" + input.value.slice(end);
+        input.setSelectionRange(start + 1, start + 1);
+        input.focus();
+      });
+      row.appendChild(input);
+      row.appendChild(slashBtn);
+      stepsWrap.appendChild(row);
+    } else {
+      stepsWrap.appendChild(input);
+    }
+  }
+
+  // Switches a text field's mobile keyboard to numeric while another field
+  // (e.g. the number type) has one of the given values.
+  function wireNumericKeyboards() {
+    stepsWrap.querySelectorAll("[data-numeric-when]").forEach((input) => {
+      const { key, values } = JSON.parse(input.dataset.numericWhen);
+      const source = stepsWrap.querySelector(`[data-field-key="${key}"]`);
+      if (!source) return;
+      const update = () => input.setAttribute("inputmode", values.includes(source.value) ? "numeric" : "text");
+      source.addEventListener("change", update);
+      update();
+    });
   }
 
   function renderSteps() {
@@ -361,6 +414,7 @@
       else if (step.kind === "extra") renderExtraStep();
       else renderFieldStep(step);
     });
+    wireNumericKeyboards();
   }
   typSelect.addEventListener("change", renderSteps);
 
