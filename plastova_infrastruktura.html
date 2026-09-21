@@ -138,32 +138,47 @@
   // Ordered steps per type; the form renders exactly this sequence. Photo
   // `key`s must stay in sync with PHOTO_SLOTS_BY_TYPE in
   // forms/plastova_infrastruktura.py (tests/test_plastova_infrastruktura.py
-  // checks it). Steps: photo (required), gps (button that saves the position
-  // on the spot), extra (optional "Foto jiné"), note (free text).
+  // checks it). Steps: text / select (input fields, sent under their `key`;
+  // `required` blocks submit), photo (required), gps (button that saves the
+  // position on the spot), extra (optional "Foto jiné").
   // The five types below PLACEHOLDER_STEPS are still waiting for their real shot list.
+  const NOTE_STEP = { kind: "text", key: "poznamka", label: "Poznámka", placeholder: "Nepovinné" };
+
+  // Object identification from the project documentation (PD); only some types have it.
+  const ADDRESS_STEPS = [
+    { kind: "text", key: "ulice", label: "Ulice", placeholder: "Nepovinné" },
+    {
+      kind: "select", key: "cislo_typ", label: "Typ čísla", required: true,
+      options: ["Číslo popisné", "Číslo evidenční", "Parcelní číslo", "Číslo bodu"],
+    },
+    { kind: "text", key: "cislo_hodnota", label: "Číslo (z PD)", required: true },
+  ];
+
   const PLACEHOLDER_STEPS = [
     { kind: "photo", key: "foto_1", label: "Foto" },
     { kind: "gps", label: "Lokalizovat GPS souřadnici" },
-    { kind: "note" },
+    NOTE_STEP,
   ];
 
   const FORM_STEPS_BY_TYPE = {
     "Výpich": [
-      { kind: "photo", key: "foto_zblizka", label: "Foto výpichu zblízka" },
-      { kind: "gps", label: "Lokalizovat GPS souřadnici" },
-      { kind: "photo", key: "foto_z_dalky", label: "Foto výpichu z dálky (okolí a umístění v terénu)" },
-      { kind: "photo", key: "foto_dum", label: "Foto domu / čísla popisného" },
+      ...ADDRESS_STEPS,
+      { kind: "photo", key: "foto_zblizka", label: "Foto výpichu MD z blízka" },
+      { kind: "gps", label: "Vybrat GPS souřadnice" },
+      { kind: "photo", key: "foto_z_dalky", label: "Foto z dálky výkopu výpich MD" },
+      { kind: "photo", key: "foto_dum", label: "Foto domu čp." },
       { kind: "extra" },
-      { kind: "note" },
+      NOTE_STEP,
     ],
     "T-matrix": [
-      { kind: "photo", key: "foto_otevreny", label: "Foto otevřeného matrixu se spojkováním" },
+      ...ADDRESS_STEPS,
+      { kind: "photo", key: "foto_otevreny", label: "Foto otevřeného T-matrixu vč. spojek" },
       { kind: "gps", label: "Vybrat GPS souřadnice" },
-      { kind: "photo", key: "foto_zavreny", label: "Foto zavřeného matrixu" },
-      { kind: "photo", key: "foto_z_dalky", label: "Foto z dálky (umístění matrixu v terénu / výkopu)" },
-      { kind: "photo", key: "foto_dum", label: "Foto domu / čísla popisného" },
+      { kind: "photo", key: "foto_zavreny", label: "Foto zavřeného T-matrixu" },
+      { kind: "photo", key: "foto_z_dalky", label: "Foto z dálky výkopu T-matrix" },
+      { kind: "photo", key: "foto_dum", label: "Foto domu čp." },
       { kind: "extra" },
-      { kind: "note" },
+      NOTE_STEP,
     ],
     "Propojení MD": PLACEHOLDER_STEPS,
     "Ukončení MD": PLACEHOLDER_STEPS,
@@ -307,12 +322,32 @@
     stepsWrap.appendChild(addBtn);
   }
 
-  function renderNoteStep() {
-    const input = document.createElement("input");
-    input.type = "text";
-    input.id = "poznamka";
-    input.placeholder = "Nepovinné";
-    stepsWrap.appendChild(makeLabel("Poznámka"));
+  function renderFieldStep(step) {
+    let input;
+    if (step.kind === "select") {
+      input = document.createElement("select");
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "— vyber —";
+      placeholder.disabled = true;
+      placeholder.selected = true;
+      input.appendChild(placeholder);
+      step.options.forEach((name) => {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        input.appendChild(opt);
+      });
+    } else {
+      input = document.createElement("input");
+      input.type = "text";
+      if (step.placeholder) input.placeholder = step.placeholder;
+    }
+    input.className = "field-input";
+    input.dataset.fieldKey = step.key;
+    input.dataset.label = step.label;
+    if (step.required) input.dataset.required = "1";
+    stepsWrap.appendChild(makeLabel(step.label));
     stepsWrap.appendChild(input);
   }
 
@@ -324,7 +359,7 @@
       if (step.kind === "photo") renderPhotoStep(step);
       else if (step.kind === "gps") renderGpsStep(step);
       else if (step.kind === "extra") renderExtraStep();
-      else if (step.kind === "note") renderNoteStep();
+      else renderFieldStep(step);
     });
   }
   typSelect.addEventListener("change", renderSteps);
@@ -380,13 +415,17 @@
       obec,
       typ,
       gps: pos ? { lat: pos.latitude, lon: pos.longitude } : null,
-      poznamka: document.getElementById("poznamka")?.value || "",
       photos: {},
     };
 
     const missingFields = [];
     if (!data.obec) missingFields.push("Obec");
     if (!data.typ) missingFields.push("Typ");
+    stepsWrap.querySelectorAll(".field-input").forEach((input) => {
+      const value = input.value.trim();
+      data[input.dataset.fieldKey] = value;
+      if (input.dataset.required && !value) missingFields.push(input.dataset.label);
+    });
     if (missingFields.length) {
       alert("Vyplň prosím: " + missingFields.join(", "));
       return;
