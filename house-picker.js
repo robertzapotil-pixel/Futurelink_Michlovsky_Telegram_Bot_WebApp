@@ -20,10 +20,14 @@
 
   const params = new URLSearchParams(location.search);
   const technik = params.get("technik") || "";
-  // Telegram's signed proof that this page was opened from the bot's own
-  // Mini App — forwarded to the Apps Script endpoint so it can tell a real
-  // request apart from anyone who finds the public API URL in this file.
-  const initData = window.Telegram?.WebApp?.initData || "";
+  // The bot signs auth_ts with its own token when it builds this launch URL
+  // (see main.py _send_webapp_button) — forwarded to the Apps Script
+  // endpoint so it can tell a request from a freshly-sent link apart from
+  // anyone who just finds the public API URL in this file. Telegram's own
+  // WebApp.initData isn't used: real-device testing showed it's empty for
+  // Mini Apps opened from a persistent ReplyKeyboard button.
+  const authTs = params.get("auth_ts") || "";
+  const authSig = params.get("auth_sig") || "";
 
   root.innerHTML = `
     <label for="hp_obec">Obec</label>
@@ -132,7 +136,7 @@
   fetch(HOUSES_API_URL, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" }, // avoids a CORS preflight
-    body: JSON.stringify({ init_data: initData, technik }),
+    body: JSON.stringify({ auth_ts: authTs, auth_sig: authSig, technik }),
   })
     .then((r) => r.json())
     .then((data) => {
@@ -140,19 +144,8 @@
       houses = data.houses || [];
       populateObce();
     })
-    .catch((err) => {
-      // Temporary diagnostic detail (remove once the picker is stable) — iOS
-      // Telegram's WebView isn't easily inspectable, so show the real reason
-      // on screen instead of a generic message.
-      const tgObj = window.Telegram;
-      const wa = tgObj?.WebApp;
-      root.innerHTML = `<div class="hint status-bad">Nepodařilo se načíst seznam domů.<br>` +
-        `Detail: ${String(err && err.message || err)}<br>` +
-        `initData délka: ${initData.length}<br>` +
-        `window.Telegram existuje: ${!!tgObj}<br>` +
-        `WebApp existuje: ${!!wa}<br>` +
-        `platform: ${wa?.platform}<br>` +
-        `version: ${wa?.version}</div>`;
+    .catch(() => {
+      root.innerHTML = '<div class="hint status-bad">Nepodařilo se načíst seznam domů. Zkus formulář otevřít znovu z Telegramu.</div>';
     });
 
   window.HousePicker = {
