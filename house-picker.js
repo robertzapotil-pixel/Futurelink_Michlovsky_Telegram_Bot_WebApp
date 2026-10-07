@@ -140,8 +140,11 @@
       houses = data.houses || [];
       populateObce();
     })
-    .catch(() => {
-      root.innerHTML = '<div class="hint status-bad">Nepodařilo se načíst seznam domů. Zkus formulář otevřít znovu z Telegramu.</div>';
+    .catch((err) => {
+      // Temporary diagnostic detail (remove once the picker is stable) — iOS
+      // Telegram's WebView isn't easily inspectable, so show the real reason
+      // on screen instead of a generic message.
+      root.innerHTML = `<div class="hint status-bad">Nepodařilo se načíst seznam domů.<br>Detail: ${String(err && err.message || err)}<br>initData délka: ${initData.length}</div>`;
     });
 
   window.HousePicker = {
