@@ -39,17 +39,7 @@
   .hint { color: var(--hint); font-size: 13px; margin-top: 4px; }
   .status-ok { color: #2ecc71; }
   .status-bad { color: #e74c3c; }
-  .input-with-key { display: flex; gap: 8px; }
-  .input-with-key input { flex: 1; min-width: 0; }
-  button.slash-key {
-    flex: 0 0 56px;
-    border: 1px solid var(--button);
-    border-radius: 8px;
-    background: none;
-    color: var(--button);
-    font-size: 22px;
-    font-weight: 700;
-  }
+  input[type="checkbox"] { width: auto; }
   button#submit {
     width: 100%;
     margin-top: 24px;
@@ -67,35 +57,18 @@
 <body>
   <h1>Připraveno pro závrt</h1>
 
-  <label for="obec">Obec</label>
-  <select id="obec" required></select>
-
-  <label for="ulice">Ulice</label>
-  <input type="text" id="ulice" placeholder="Nepovinné" />
-
-  <label for="cislo_typ">Typ čísla</label>
-  <select id="cislo_typ" required>
-    <option value="" disabled selected>— vyber —</option>
-    <option>Číslo popisné</option>
-    <option>Číslo orientační</option>
-    <option>Číslo evidenční</option>
-    <option>Číslo parcely</option>
-    <option>Číslo bodu z PD</option>
-  </select>
-
-  <label for="cislo_hodnota">Číslo</label>
-  <!-- Numeric keypad for the digit-only number types (see updateKeyboard());
-       the on-screen "/" key exists because mobile numeric keypads have none. -->
-  <div class="input-with-key">
-    <input type="text" id="cislo_hodnota" required />
-    <button type="button" class="slash-key" id="slash_key" aria-label="Vložit lomítko">/</button>
-  </div>
+  <div id="house_picker"></div>
 
   <label for="foto_vykop_mt">Foto výkopu a MT připraveno pro závrt</label>
   <input type="file" id="foto_vykop_mt" />
 
   <label for="poznamka">Poznámka</label>
   <input type="text" id="poznamka" placeholder="Nepovinné" />
+
+  <label class="checkbox-label" style="font-weight:400;">
+    <input type="checkbox" id="prace_dokoncena" style="width:auto; display:inline-block; vertical-align:middle;" />
+    Práce dokončena
+  </label>
 
   <label>GPS poloha</label>
   <div class="hint" id="gps_status">Hledám polohu…</div>
@@ -109,54 +82,17 @@
   const UPLOAD_MAX_DIM = 1280; // smaller upload = faster; still plenty for documentation photos
   const UPLOAD_JPEG_QUALITY = 0.7;
   const PHOTO_ACCEPT = "image/jpeg,image/png,image/heic,image/heif,image/webp";
-  const NUMERIC_CISLO_TYPES = ["Číslo popisné", "Číslo orientační", "Číslo evidenční"];
 
   const tg = window.Telegram?.WebApp;
   tg?.ready();
   tg?.expand();
 
-  const params = new URLSearchParams(location.search);
-  const obceList = (params.get("obce") || "").split("|").filter(Boolean);
-  const obecSelect = document.getElementById("obec");
-  const obecPlaceholder = document.createElement("option");
-  obecPlaceholder.value = "";
-  obecPlaceholder.textContent = "— vyber —";
-  obecPlaceholder.disabled = true;
-  obecPlaceholder.selected = true;
-  obecSelect.appendChild(obecPlaceholder);
-  obceList.forEach((name) => {
-    const opt = document.createElement("option");
-    opt.value = name;
-    opt.textContent = name;
-    obecSelect.appendChild(opt);
-  });
-
-  const cisloTypSelect = document.getElementById("cislo_typ");
-  const cisloInput = document.getElementById("cislo_hodnota");
   const photoInput = document.getElementById("foto_vykop_mt");
   // Explicit MIME list (not the "image/*" wildcard) and no `capture`
   // attribute — on some Telegram iOS versions "image/*" alone makes the
   // WebView jump straight to the camera instead of offering the photo
   // library too.
   photoInput.accept = PHOTO_ACCEPT;
-
-  // Parcel numbers ("st. 12/3") and PD point numbers may contain letters, so
-  // only the digit-only number types get the numeric keypad.
-  function updateKeyboard() {
-    cisloInput.setAttribute("inputmode", NUMERIC_CISLO_TYPES.includes(cisloTypSelect.value) ? "numeric" : "text");
-  }
-  cisloTypSelect.addEventListener("change", updateKeyboard);
-  updateKeyboard();
-
-  const slashKey = document.getElementById("slash_key");
-  slashKey.addEventListener("mousedown", (e) => e.preventDefault()); // keep focus (and keyboard) on the input
-  slashKey.addEventListener("click", () => {
-    const start = cisloInput.selectionStart ?? cisloInput.value.length;
-    const end = cisloInput.selectionEnd ?? start;
-    cisloInput.value = cisloInput.value.slice(0, start) + "/" + cisloInput.value.slice(end);
-    cisloInput.setSelectionRange(start + 1, start + 1);
-    cisloInput.focus();
-  });
 
   // Downscale + re-encode as JPEG — smaller uploads.
   function loadScaledCanvas(file, maxDim) {
@@ -180,16 +116,17 @@
     });
   }
 
-  async function uploadPhoto(file, obec) {
+  async function uploadPhoto(file, obec, domId) {
     const canvas = await loadScaledCanvas(file, UPLOAD_MAX_DIM);
     const dataUrl = canvas.toDataURL("image/jpeg", UPLOAD_JPEG_QUALITY);
     const dataBase64 = dataUrl.split(",")[1];
+    const filename = `${domId}_${file.name || "foto.jpg"}`;
 
     const response = await fetch(UPLOAD_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" }, // avoids a CORS preflight
       body: JSON.stringify({
-        obec, kategorie: "vykop_zavrt", filename: file.name || "foto.jpg",
+        obec, kategorie: "vykop_zavrt", filename,
         mimeType: "image/jpeg", dataBase64,
       }),
     });
@@ -224,23 +161,19 @@
   }
 
   submitBtn.addEventListener("click", async () => {
-    const obec = obecSelect.value;
+    const house = window.HousePicker?.getSelectedHouse();
 
     const data = {
       form: "vykop_zavrt",
-      obec,
-      ulice: document.getElementById("ulice").value,
-      cislo_typ: cisloTypSelect.value,
-      cislo_hodnota: cisloInput.value,
+      dum_id: house ? house.id : null,
+      prace_dokoncena: document.getElementById("prace_dokoncena").checked,
       poznamka: document.getElementById("poznamka").value,
       gps: lastPosition ? { lat: lastPosition.latitude, lon: lastPosition.longitude } : null,
       photos: {},
     };
 
     const missingFields = [];
-    if (!data.obec) missingFields.push("Obec");
-    if (!data.cislo_typ) missingFields.push("Typ čísla");
-    if (!data.cislo_hodnota.trim()) missingFields.push("Číslo");
+    if (!data.dum_id) missingFields.push("Dům (vyber a potvrď)");
     if (!photoInput.files[0]) missingFields.push("Foto výkopu a MT připraveno pro závrt");
 
     if (missingFields.length) {
@@ -251,7 +184,7 @@
     submitBtn.disabled = true;
     try {
       submitStatus.textContent = "Nahrávám fotku…";
-      data.photos.foto_vykop_mt = await uploadPhoto(photoInput.files[0], obec);
+      data.photos.foto_vykop_mt = await uploadPhoto(photoInput.files[0], house.obec, house.id);
     } catch (err) {
       submitStatus.textContent = "";
       alert("Nahrávání fotky selhalo: " + err.message + ". Zkus to prosím znovu.");
@@ -263,5 +196,6 @@
     tg.sendData(JSON.stringify(data));
   });
 </script>
+<script src="house-picker.js"></script>
 </body>
 </html>
