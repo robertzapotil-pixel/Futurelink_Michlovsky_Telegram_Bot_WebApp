@@ -77,23 +77,7 @@
 <body>
   <h1>Nový závrt</h1>
 
-  <label for="obec">Obec</label>
-  <select id="obec" required></select>
-
-  <label for="ulice">Ulice</label>
-  <input type="text" id="ulice" required />
-
-  <label for="cislo_typ">Typ čísla objektu</label>
-  <select id="cislo_typ" required>
-    <option value="" disabled selected>— vyber —</option>
-    <option>Číslo popisné</option>
-    <option>Číslo orientační</option>
-    <option>Číslo evidenční</option>
-    <option>Parcelní číslo</option>
-  </select>
-
-  <label for="cislo_hodnota">Číslo objektu</label>
-  <input type="text" id="cislo_hodnota" required />
+  <div id="house_picker"></div>
 
   <h2>Fotodokumentace</h2>
   <div id="zavrt_foto_wrap"></div>
@@ -111,6 +95,11 @@
   <label for="pocet_pruvrtu">Počet průvrtů</label>
   <input type="number" id="pocet_pruvrtu" inputmode="numeric" min="1" step="1" required />
 
+  <label class="checkbox-label" style="font-weight:400;">
+    <input type="checkbox" id="prace_dokoncena" style="width:auto; display:inline-block; vertical-align:middle;" />
+    Práce dokončena
+  </label>
+
   <button id="submit">Odeslat</button>
   <div class="hint" id="submit_status"></div>
 
@@ -124,22 +113,6 @@
   const tg = window.Telegram?.WebApp;
   tg?.ready();
   tg?.expand();
-
-  const params = new URLSearchParams(location.search);
-  const obceList = (params.get("obce") || "").split("|").filter(Boolean);
-  const obecSelect = document.getElementById("obec");
-  const obecPlaceholder = document.createElement("option");
-  obecPlaceholder.value = "";
-  obecPlaceholder.textContent = "— vyber —";
-  obecPlaceholder.disabled = true;
-  obecPlaceholder.selected = true;
-  obecSelect.appendChild(obecPlaceholder);
-  obceList.forEach((name) => {
-    const opt = document.createElement("option");
-    opt.value = name;
-    opt.textContent = name;
-    obecSelect.appendChild(opt);
-  });
 
   const ZAVRT_PHOTO_SLOTS = [
     { key: "foto_vnitrek", label: "Foto vnitřek" },
@@ -209,16 +182,17 @@
     });
   }
 
-  async function uploadPhoto(file, obec) {
+  async function uploadPhoto(file, obec, domId) {
     const canvas = await loadScaledCanvas(file, UPLOAD_MAX_DIM);
     const dataUrl = canvas.toDataURL("image/jpeg", UPLOAD_JPEG_QUALITY);
     const dataBase64 = dataUrl.split(",")[1];
+    const filename = `${domId}_${file.name || "foto.jpg"}`;
 
     const response = await fetch(UPLOAD_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" }, // avoids a CORS preflight
       body: JSON.stringify({
-        obec, kategorie: "zavrt", filename: file.name || "foto.jpg",
+        obec, kategorie: "zavrt", filename,
         mimeType: "image/jpeg", dataBase64,
       }),
     });
@@ -253,25 +227,20 @@
   }
 
   submitBtn.addEventListener("click", async () => {
-    const obec = obecSelect.value;
+    const house = window.HousePicker?.getSelectedHouse();
 
     const data = {
       form: "zavrt",
-      obec,
-      ulice: document.getElementById("ulice").value,
-      cislo_typ: document.getElementById("cislo_typ").value,
-      cislo_hodnota: document.getElementById("cislo_hodnota").value,
+      dum_id: house ? house.id : null,
       pocet_pruvrtu: document.getElementById("pocet_pruvrtu").value,
       gps: lastPosition ? { lat: lastPosition.latitude, lon: lastPosition.longitude } : null,
       poznamka: document.getElementById("poznamka").value,
+      prace_dokoncena: document.getElementById("prace_dokoncena").checked,
       photos: {},
     };
 
     const missingFields = [];
-    if (!data.obec) missingFields.push("Obec");
-    if (!data.ulice) missingFields.push("Ulice");
-    if (!data.cislo_typ) missingFields.push("Typ čísla objektu");
-    if (!data.cislo_hodnota) missingFields.push("Číslo objektu");
+    if (!data.dum_id) missingFields.push("Dům (vyber a potvrď)");
     if (!data.pocet_pruvrtu) missingFields.push("Počet průvrtů");
 
     if (missingFields.length) {
@@ -298,13 +267,13 @@
       // Script side is safe against the resulting concurrent requests.
       await Promise.all([
         ...requiredInputs.map(async (input) => {
-          const fileId = await uploadPhoto(input.files[0], obec);
+          const fileId = await uploadPhoto(input.files[0], house.obec, house.id);
           data.photos[input.dataset.slotKey] = fileId;
           uploaded += 1;
           submitStatus.textContent = `Nahrávám fotky… (${uploaded}/${total})`;
         }),
         ...extraInputs.map(async (input, i) => {
-          const fileId = await uploadPhoto(input.files[0], obec);
+          const fileId = await uploadPhoto(input.files[0], house.obec, house.id);
           data.photos[`foto_jine_${i + 1}`] = fileId;
           uploaded += 1;
           submitStatus.textContent = `Nahrávám fotky… (${uploaded}/${total})`;
@@ -321,5 +290,6 @@
     tg.sendData(JSON.stringify(data));
   });
 </script>
+<script src="house-picker.js"></script>
 </body>
 </html>

@@ -64,23 +64,7 @@
 <body>
   <h1>Metry záfuk</h1>
 
-  <label for="obec">Obec</label>
-  <select id="obec" required></select>
-
-  <label for="ulice">Ulice</label>
-  <input type="text" id="ulice" required />
-
-  <label for="cislo_typ">Typ čísla objektu</label>
-  <select id="cislo_typ" required>
-    <option value="" disabled selected>— vyber —</option>
-    <option>Číslo popisné</option>
-    <option>Číslo orientační</option>
-    <option>Číslo evidenční</option>
-    <option>Parcelní číslo</option>
-  </select>
-
-  <label for="cislo_hodnota">Číslo objektu</label>
-  <input type="text" id="cislo_hodnota" required />
+  <div id="house_picker"></div>
 
   <label for="typ_kabelu">Typ kabelu</label>
   <select id="typ_kabelu" required>
@@ -111,6 +95,11 @@
   <label for="poznamka">Poznámka</label>
   <input type="text" id="poznamka" placeholder="Nepovinné" />
 
+  <label class="checkbox-label" style="font-weight:400;">
+    <input type="checkbox" id="prace_dokoncena" style="width:auto; display:inline-block; vertical-align:middle;" />
+    Práce dokončena
+  </label>
+
   <button id="submit">Odeslat</button>
   <div class="hint" id="submit_status"></div>
 
@@ -118,22 +107,6 @@
   const tg = window.Telegram?.WebApp;
   tg?.ready();
   tg?.expand();
-
-  const params = new URLSearchParams(location.search);
-  const obceList = (params.get("obce") || "").split("|").filter(Boolean);
-  const obecSelect = document.getElementById("obec");
-  const obecPlaceholder = document.createElement("option");
-  obecPlaceholder.value = "";
-  obecPlaceholder.textContent = "— vyber —";
-  obecPlaceholder.disabled = true;
-  obecPlaceholder.selected = true;
-  obecSelect.appendChild(obecPlaceholder);
-  obceList.forEach((name) => {
-    const opt = document.createElement("option");
-    opt.value = name;
-    opt.textContent = name;
-    obecSelect.appendChild(opt);
-  });
 
   // Live výsledek = |začátek - konec|, shown as soon as both fields have a value.
   const zacatekInput = document.getElementById("zacatek_m");
@@ -179,25 +152,21 @@
   submitBtn.addEventListener("click", () => {
     const zacatek = parseFloat(zacatekInput.value);
     const konec = parseFloat(konecInput.value);
+    const domId = window.HousePicker?.getSelectedHouseId();
 
     const data = {
       form: "metry_zafuk",
-      obec: obecSelect.value,
-      ulice: document.getElementById("ulice").value,
-      cislo_typ: document.getElementById("cislo_typ").value,
-      cislo_hodnota: document.getElementById("cislo_hodnota").value,
+      dum_id: domId,
       typ_kabelu: document.getElementById("typ_kabelu").value,
       zacatek_m: zacatekInput.value,
       konec_m: konecInput.value,
       gps: lastPosition ? { lat: lastPosition.latitude, lon: lastPosition.longitude } : null,
       poznamka: document.getElementById("poznamka").value,
+      prace_dokoncena: document.getElementById("prace_dokoncena").checked,
     };
 
     const missingFields = [];
-    if (!data.obec) missingFields.push("Obec");
-    if (!data.ulice) missingFields.push("Ulice");
-    if (!data.cislo_typ) missingFields.push("Typ čísla objektu");
-    if (!data.cislo_hodnota) missingFields.push("Číslo objektu");
+    if (!data.dum_id) missingFields.push("Dům (vyber a potvrď)");
     if (!data.typ_kabelu) missingFields.push("Typ kabelu");
     if (!Number.isFinite(zacatek)) missingFields.push("Začátek metrů");
     if (!Number.isFinite(konec)) missingFields.push("Konec metrů");
@@ -212,5 +181,6 @@
     tg.sendData(JSON.stringify(data));
   });
 </script>
+<script src="house-picker.js"></script>
 </body>
 </html>

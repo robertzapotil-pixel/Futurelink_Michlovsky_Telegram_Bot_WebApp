@@ -125,12 +125,16 @@
   const UPLOAD_JPEG_QUALITY = 0.7;
   const PHOTO_ACCEPT = "image/jpeg,image/png,image/heic,image/heif,image/webp";
   const MAX_TOTAL_PHOTOS = 10; // Telegram media group limit
+  const TYPES_WITH_HOUSE = new Set(["Výpich", "T-matrix"]);
 
   const tg = window.Telegram?.WebApp;
   tg?.ready();
   tg?.expand();
 
   const params = new URLSearchParams(location.search);
+  const technik = params.get("technik") || "";
+  const authTs = params.get("auth_ts") || "";
+  const authSig = params.get("auth_sig") || "";
   const obceList = (params.get("obce") || "").split("|").filter(Boolean);
   const obecSelect = document.getElementById("obec");
   const obecPlaceholder = document.createElement("option");
@@ -151,26 +155,17 @@
   // forms/plastova_infrastruktura.py (tests/test_plastova_infrastruktura.py
   // checks it). Steps: text / select (input fields, sent under their `key`;
   // `required` blocks submit), photo (required), gps (button that saves the
-  // position on the spot), extra (optional "Foto jiné").
+  // position on the spot), extra (optional "Foto jiné"), house (pick a dům
+  // from Evidence, scoped to the already-selected Obec above), checkbox.
   // The four types using PLACEHOLDER_STEPS are still waiting for their real shot list.
   const NOTE_STEP = { kind: "text", key: "poznamka", label: "Poznámka", placeholder: "Nepovinné" };
+  const PRACE_DOKONCENA_STEP = { kind: "checkbox", key: "prace_dokoncena", label: "Práce dokončena" };
 
-  // Object identification from the project documentation (PD); only some types have it.
-  const ADDRESS_STEPS = [
-    { kind: "text", key: "ulice", label: "Ulice", placeholder: "Nepovinné" },
-    {
-      kind: "select", key: "cislo_typ", label: "Typ čísla", required: true,
-      options: ["Číslo popisné", "Číslo evidenční", "Parcelní číslo", "Číslo bodu"],
-    },
-    {
-      // Numeric keypad for the number types that are digits (+ "/"); parcel
-      // numbers ("st. 12/3") and point numbers may contain letters, so they
-      // keep the full keyboard. The on-screen "/" key exists because mobile
-      // numeric keypads have no slash.
-      kind: "text", key: "cislo_hodnota", label: "Číslo (z PD)", required: true, slashKey: true,
-      numericWhen: { key: "cislo_typ", values: ["Číslo popisné", "Číslo evidenční"] },
-    },
-  ];
+  // Výpich/T-matrix identify the object by picking a dům from Evidence
+  // (replaces manual Ulice/Typ čísla/Číslo entry) instead of a plain Obec
+  // dropdown — scoped to whichever Obec is already selected above, so the
+  // technician doesn't pick the village twice.
+  const HOUSE_STEP = { kind: "house" };
 
   const PLACEHOLDER_STEPS = [
     { kind: "photo", key: "foto_1", label: "Foto" },
@@ -181,16 +176,17 @@
 
   const FORM_STEPS_BY_TYPE = {
     "Výpich": [
-      ...ADDRESS_STEPS,
+      HOUSE_STEP,
       { kind: "photo", key: "foto_zblizka", label: "Foto výpichu MD z blízka" },
       { kind: "gps", label: "Vybrat GPS souřadnice" },
       { kind: "photo", key: "foto_z_dalky", label: "Foto z dálky výkopu výpich MD" },
       { kind: "photo", key: "foto_dum", label: "Foto domu čp." },
       { kind: "extra" },
       NOTE_STEP,
+      PRACE_DOKONCENA_STEP,
     ],
     "T-matrix": [
-      ...ADDRESS_STEPS,
+      HOUSE_STEP,
       { kind: "photo", key: "foto_otevreny", label: "Foto otevřeného T-matrixu vč. spojek" },
       { kind: "gps", label: "Vybrat GPS souřadnice" },
       { kind: "photo", key: "foto_zavreny", label: "Foto zavřeného T-matrixu" },
@@ -198,6 +194,7 @@
       { kind: "photo", key: "foto_dum", label: "Foto domu čp." },
       { kind: "extra" },
       NOTE_STEP,
+      PRACE_DOKONCENA_STEP,
     ],
     "Propojení MD": PLACEHOLDER_STEPS,
     "Ukončení MD": PLACEHOLDER_STEPS,
@@ -225,6 +222,28 @@
   let gpsFailed = false;
   let gpsStatusEl = null;
   let extraPhotosWrap = null;
+  let selectedDumHouse = null;
+  // Single slot for the house step's "obec changed" handler — renderSteps()
+  // clears it on every type switch, renderHouseStep() fills it in, and one
+  // obecSelect listener (registered once, below) calls whatever's in it.
+  // Avoids stacking a fresh listener on obecSelect every time the technician
+  // flips between Výpich/T-matrix and another type.
+  let onObecChangeForHouseStep = null;
+  obecSelect.addEventListener("change", () => onObecChangeForHouseStep?.());
+
+  // Evidence house list — Apps Script Web App (appscript/evidence_api.gs),
+  // same auth scheme as webapp/house-picker.js (bot-signed auth_ts/auth_sig,
+  // not Telegram.WebApp.initData — see CLAUDE.md 2026-10-07). Fetched once;
+  // the "Dům" step filters it client-side by the already-selected Obec.
+  const HOUSES_API_URL = "https://script.google.com/macros/s/AKfycbwY-xfq1o3jIv1nwRME9VumUDgZN4A3L9CYbUmWwFCqwoDoccDo_tucqCs2B0jsUJbJAQ/exec";
+  const housesPromise = fetch(HOUSES_API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ auth_ts: authTs, auth_sig: authSig, technik }),
+  })
+    .then((r) => r.json())
+    .then((data) => (data.error ? [] : data.houses || []))
+    .catch(() => []);
 
   function renderGpsStatus() {
     if (!gpsStatusEl) return;
@@ -346,6 +365,114 @@
     stepsWrap.appendChild(addBtn);
   }
 
+  function houseLabel(house) {
+    const cislo = house.cislo_popisne || house.cislo_orientacni
+      ? house.cislo_popisne || house.cislo_orientacni
+      : house.parcelni_cislo ? `parc. ${house.parcelni_cislo}` : "bez čísla";
+    const star = house.planovano_dnes ? "⭐ " : "";
+    return `${star}${cislo} · ${house.ulice || "—"} · ${house.jmeno} (#${house.id})`;
+  }
+
+  function renderHouseStep() {
+    const dumSelect = document.createElement("select");
+    dumSelect.id = "dum_select";
+    dumSelect.disabled = true;
+    dumSelect.innerHTML = '<option value="">— nejdřív vyber obec —</option>';
+
+    const card = document.createElement("div");
+    card.className = "hint";
+    card.style.display = "none";
+    card.style.marginTop = "8px";
+
+    const confirmLabel = document.createElement("label");
+    confirmLabel.style.display = "none";
+    confirmLabel.style.fontWeight = "400";
+    confirmLabel.style.marginTop = "8px";
+    const confirmCheckbox = document.createElement("input");
+    confirmCheckbox.type = "checkbox";
+    confirmCheckbox.id = "dum_confirm";
+    confirmCheckbox.style.width = "auto";
+    confirmCheckbox.style.display = "inline-block";
+    confirmCheckbox.style.verticalAlign = "middle";
+    const confirmText = document.createElement("span");
+    confirmLabel.appendChild(confirmCheckbox);
+    confirmLabel.appendChild(confirmText);
+
+    stepsWrap.appendChild(makeLabel("Dům"));
+    stepsWrap.appendChild(dumSelect);
+    stepsWrap.appendChild(card);
+    stepsWrap.appendChild(confirmLabel);
+
+    function populateDomy(houses, obec) {
+      const inObec = houses
+        .filter((h) => h.obec === obec && h.id)
+        .sort((a, b) => (b.planovano_dnes ? 1 : 0) - (a.planovano_dnes ? 1 : 0));
+      dumSelect.innerHTML = '<option value="">— vyber —</option>';
+      inObec.forEach((house) => {
+        const opt = document.createElement("option");
+        opt.value = house.id;
+        opt.textContent = houseLabel(house);
+        dumSelect.appendChild(opt);
+      });
+      dumSelect.disabled = inObec.length === 0;
+      if (inObec.length === 0) dumSelect.innerHTML = '<option value="">V této obci nejsou žádné domy s ID</option>';
+      return inObec;
+    }
+
+    let housesInObec = [];
+    housesPromise.then((houses) => {
+      if (obecSelect.value) housesInObec = populateDomy(houses, obecSelect.value);
+      onObecChangeForHouseStep = () => {
+        selectedDumHouse = null;
+        confirmCheckbox.checked = false;
+        card.style.display = "none";
+        confirmLabel.style.display = "none";
+        housesInObec = obecSelect.value ? populateDomy(houses, obecSelect.value) : [];
+      };
+    });
+
+    dumSelect.addEventListener("change", () => {
+      selectedDumHouse = housesInObec.find((h) => String(h.id) === dumSelect.value) || null;
+      confirmCheckbox.checked = false;
+      if (!selectedDumHouse) {
+        card.style.display = "none";
+        confirmLabel.style.display = "none";
+        return;
+      }
+      const cisloLine = selectedDumHouse.cislo_popisne
+        ? `č.p. ${selectedDumHouse.cislo_popisne}`
+        : selectedDumHouse.cislo_orientacni
+        ? `č.o. ${selectedDumHouse.cislo_orientacni}`
+        : selectedDumHouse.parcelni_cislo
+        ? `parc. ${selectedDumHouse.parcelni_cislo}`
+        : "bez čísla";
+      card.innerHTML = [
+        `<strong>#${selectedDumHouse.id} ${selectedDumHouse.jmeno}</strong>`,
+        `${selectedDumHouse.ulice || "—"}, ${cisloLine}, ${selectedDumHouse.obec}`,
+        selectedDumHouse.telefon || "",
+      ].filter(Boolean).join("<br>");
+      card.style.display = "block";
+      confirmText.textContent =
+        `Zapisuješ k domu #${selectedDumHouse.id} – ${selectedDumHouse.jmeno}, ` +
+        `${selectedDumHouse.ulice || "—"} ${cisloLine}, ${selectedDumHouse.obec}. Souhlasí?`;
+      confirmLabel.style.display = "block";
+    });
+  }
+
+  function renderCheckboxStep(step) {
+    const label = document.createElement("label");
+    label.style.fontWeight = "400";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.id = `checkbox_${step.key}`;
+    input.style.width = "auto";
+    input.style.display = "inline-block";
+    input.style.verticalAlign = "middle";
+    label.appendChild(input);
+    label.appendChild(document.createTextNode(" " + step.label));
+    stepsWrap.appendChild(label);
+  }
+
   function renderFieldStep(step) {
     let input;
     if (step.kind === "select") {
@@ -414,10 +541,14 @@
     stepsWrap.innerHTML = "";
     gpsStatusEl = null;
     extraPhotosWrap = null;
+    selectedDumHouse = null;
+    onObecChangeForHouseStep = null;
     (FORM_STEPS_BY_TYPE[typSelect.value] || []).forEach((step) => {
       if (step.kind === "photo") renderPhotoStep(step);
       else if (step.kind === "gps") renderGpsStep(step);
       else if (step.kind === "extra") renderExtraStep();
+      else if (step.kind === "house") renderHouseStep();
+      else if (step.kind === "checkbox") renderCheckboxStep(step);
       else renderFieldStep(step);
     });
     wireNumericKeyboards();
@@ -446,16 +577,17 @@
     });
   }
 
-  async function uploadPhoto(file, obec) {
+  async function uploadPhoto(file, obec, domId) {
     const canvas = await loadScaledCanvas(file, UPLOAD_MAX_DIM);
     const dataUrl = canvas.toDataURL("image/jpeg", UPLOAD_JPEG_QUALITY);
     const dataBase64 = dataUrl.split(",")[1];
+    const filename = domId ? `${domId}_${file.name || "foto.jpg"}` : (file.name || "foto.jpg");
 
     const response = await fetch(UPLOAD_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" }, // avoids a CORS preflight
       body: JSON.stringify({
-        obec, kategorie: "plastova_infrastruktura", filename: file.name || "foto.jpg",
+        obec, kategorie: "plastova_infrastruktura", filename,
         mimeType: "image/jpeg", dataBase64,
       }),
     });
@@ -466,20 +598,30 @@
   }
 
   submitBtn.addEventListener("click", async () => {
-    const obec = obecSelect.value;
     const typ = typSelect.value;
+    const usesHouse = TYPES_WITH_HOUSE.has(typ);
     const pos = lockedPosition || lastPosition;
+    const dumConfirmed = usesHouse && selectedDumHouse && document.getElementById("dum_confirm")?.checked;
 
     const data = {
       form: "plastova_infrastruktura",
-      obec,
       typ,
       gps: pos ? { lat: pos.latitude, lon: pos.longitude } : null,
       photos: {},
     };
+    if (usesHouse) {
+      data.dum_id = dumConfirmed ? selectedDumHouse.id : null;
+      data.prace_dokoncena = document.getElementById("checkbox_prace_dokoncena")?.checked || false;
+    } else {
+      data.obec = obecSelect.value;
+    }
 
     const missingFields = [];
-    if (!data.obec) missingFields.push("Obec");
+    if (usesHouse) {
+      if (!data.dum_id) missingFields.push("Dům (vyber obec, dům a potvrď)");
+    } else if (!data.obec) {
+      missingFields.push("Obec");
+    }
     if (!data.typ) missingFields.push("Typ");
     stepsWrap.querySelectorAll(".field-input").forEach((input) => {
       const value = input.value.trim();
@@ -502,13 +644,16 @@
       ? Array.from(extraPhotosWrap.querySelectorAll(".extra-photo-input")).filter((input) => input.files[0])
       : [];
 
+    const uploadObec = usesHouse ? selectedDumHouse.obec : data.obec;
+    const uploadDomId = usesHouse ? selectedDumHouse.id : null;
+
     submitBtn.disabled = true;
     try {
       let uploaded = 0;
       const total = requiredInputs.length + extraInputs.length;
       submitStatus.textContent = `Nahrávám fotky… (0/${total})`;
       const upload = async (input, key) => {
-        const fileId = await uploadPhoto(input.files[0], obec);
+        const fileId = await uploadPhoto(input.files[0], uploadObec, uploadDomId);
         uploaded += 1;
         submitStatus.textContent = `Nahrávám fotky… (${uploaded}/${total})`;
         return [key, fileId];
