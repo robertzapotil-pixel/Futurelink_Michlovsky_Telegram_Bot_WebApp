@@ -144,7 +144,15 @@
       // Temporary diagnostic detail (remove once the picker is stable) — iOS
       // Telegram's WebView isn't easily inspectable, so show the real reason
       // on screen instead of a generic message.
-      root.innerHTML = `<div class="hint status-bad">Nepodařilo se načíst seznam domů.<br>Detail: ${String(err && err.message || err)}<br>initData délka: ${initData.length}</div>`;
+      const tgObj = window.Telegram;
+      const wa = tgObj?.WebApp;
+      root.innerHTML = `<div class="hint status-bad">Nepodařilo se načíst seznam domů.<br>` +
+        `Detail: ${String(err && err.message || err)}<br>` +
+        `initData délka: ${initData.length}<br>` +
+        `window.Telegram existuje: ${!!tgObj}<br>` +
+        `WebApp existuje: ${!!wa}<br>` +
+        `platform: ${wa?.platform}<br>` +
+        `version: ${wa?.version}</div>`;
     });
 
   window.HousePicker = {
