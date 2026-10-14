@@ -36,7 +36,16 @@
     color: var(--text);
     font-size: 15px;
   }
+  .hidden { display: none !important; }
   .hint { color: var(--hint); font-size: 13px; margin-top: 4px; }
+  .radio-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 400;
+    margin: 10px 0;
+  }
+  .radio-label input { width: auto; }
   .status-ok { color: #2ecc71; }
   .status-bad { color: #e74c3c; }
   .result-box {
@@ -81,11 +90,28 @@
     <option>288 vl.</option>
   </select>
 
-  <label for="zacatek_m">Začátek metrů</label>
-  <input type="number" id="zacatek_m" inputmode="decimal" step="0.01" required />
+  <label>Způsob zadání</label>
+  <label class="radio-label">
+    <input type="radio" name="vstup_mod" value="primo" checked />
+    Přímo metry (z počítadla zafukovačky)
+  </label>
+  <label class="radio-label">
+    <input type="radio" name="vstup_mod" value="zacatek_konec" />
+    Začátek a konec (spočítá se rozdíl)
+  </label>
 
-  <label for="konec_m">Konec metrů</label>
-  <input type="number" id="konec_m" inputmode="decimal" step="0.01" required />
+  <div id="primo_block">
+    <label for="metry_m">Metry</label>
+    <input type="number" id="metry_m" inputmode="decimal" step="0.01" />
+  </div>
+
+  <div id="zacatek_konec_block" class="hidden">
+    <label for="zacatek_m">Začátek metrů</label>
+    <input type="number" id="zacatek_m" inputmode="decimal" step="0.01" />
+
+    <label for="konec_m">Konec metrů</label>
+    <input type="number" id="konec_m" inputmode="decimal" step="0.01" />
+  </div>
 
   <div class="result-box" id="result_box">Výsledek: —</div>
 
@@ -108,12 +134,26 @@
   tg?.ready();
   tg?.expand();
 
-  // Live výsledek = |začátek - konec|, shown as soon as both fields have a value.
+  // Two input modes: "primo" (one reading off the zafukovačka's counter) or
+  // "zacatek_konec" (start/end tape-measure pair, server computes |diff|).
+  const metryInput = document.getElementById("metry_m");
   const zacatekInput = document.getElementById("zacatek_m");
   const konecInput = document.getElementById("konec_m");
+  const primoBlock = document.getElementById("primo_block");
+  const zacatekKonecBlock = document.getElementById("zacatek_konec_block");
   const resultBox = document.getElementById("result_box");
+  const modeRadios = document.querySelectorAll('input[name="vstup_mod"]');
+
+  function currentMode() {
+    return document.querySelector('input[name="vstup_mod"]:checked').value;
+  }
 
   function updateResult() {
+    if (currentMode() === "primo") {
+      const metry = parseFloat(metryInput.value);
+      resultBox.textContent = Number.isFinite(metry) ? `Výsledek: ${metry.toFixed(2)} m` : "Výsledek: —";
+      return;
+    }
     const zacatek = parseFloat(zacatekInput.value);
     const konec = parseFloat(konecInput.value);
     if (Number.isFinite(zacatek) && Number.isFinite(konec)) {
@@ -122,6 +162,14 @@
       resultBox.textContent = "Výsledek: —";
     }
   }
+
+  modeRadios.forEach((radio) => radio.addEventListener("change", () => {
+    const isPrimo = currentMode() === "primo";
+    primoBlock.classList.toggle("hidden", !isPrimo);
+    zacatekKonecBlock.classList.toggle("hidden", isPrimo);
+    updateResult();
+  }));
+  metryInput.addEventListener("input", updateResult);
   zacatekInput.addEventListener("input", updateResult);
   konecInput.addEventListener("input", updateResult);
 
@@ -150,16 +198,14 @@
   }
 
   submitBtn.addEventListener("click", () => {
-    const zacatek = parseFloat(zacatekInput.value);
-    const konec = parseFloat(konecInput.value);
+    const mode = currentMode();
     const domId = window.HousePicker?.getSelectedHouseId();
 
     const data = {
       form: "metry_zafuk",
       dum_id: domId,
       typ_kabelu: document.getElementById("typ_kabelu").value,
-      zacatek_m: zacatekInput.value,
-      konec_m: konecInput.value,
+      vstup_mod: mode,
       gps: lastPosition ? { lat: lastPosition.latitude, lon: lastPosition.longitude } : null,
       poznamka: document.getElementById("poznamka").value,
       prace_dokoncena: document.getElementById("prace_dokoncena").checked,
@@ -168,8 +214,19 @@
     const missingFields = [];
     if (!data.dum_id) missingFields.push("Dům (vyber a potvrď)");
     if (!data.typ_kabelu) missingFields.push("Typ kabelu");
-    if (!Number.isFinite(zacatek)) missingFields.push("Začátek metrů");
-    if (!Number.isFinite(konec)) missingFields.push("Konec metrů");
+
+    if (mode === "primo") {
+      const metry = parseFloat(metryInput.value);
+      data.metry_m = metryInput.value;
+      if (!Number.isFinite(metry)) missingFields.push("Metry");
+    } else {
+      const zacatek = parseFloat(zacatekInput.value);
+      const konec = parseFloat(konecInput.value);
+      data.zacatek_m = zacatekInput.value;
+      data.konec_m = konecInput.value;
+      if (!Number.isFinite(zacatek)) missingFields.push("Začátek metrů");
+      if (!Number.isFinite(konec)) missingFields.push("Konec metrů");
+    }
 
     if (missingFields.length) {
       alert("Vyplň prosím: " + missingFields.join(", "));
