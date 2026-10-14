@@ -29,10 +29,12 @@
   const authTs = params.get("auth_ts") || "";
   const authSig = params.get("auth_sig") || "";
   // Obce this technician's Firma is allowed to work on (main.py
-  // _send_webapp_button, via forms/house_binding.allowed_obce_for_technician)
-  // — UX only, narrows the dropdown so no one has to scroll past projects
-  // that aren't theirs. The real check runs server-side at submit time.
-  const allowedObce = (params.get("obce") || "").split("|").filter(Boolean);
+  // _send_webapp_button, via forms/house_binding.allowed_obce_for_technician).
+  // `obceRaw` is forwarded byte-for-byte to the Evidence API below, which
+  // checks it against the bot's signature and filters the house list by it
+  // server-side — this is the real gate now, not just dropdown narrowing.
+  const obceRaw = params.get("obce") || "";
+  const allowedObce = obceRaw.split("|").filter(Boolean);
 
   root.innerHTML = `
     <div id="hp_loading" class="hint">Načítám seznam domů…</div>
@@ -146,7 +148,7 @@
   fetch(HOUSES_API_URL, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" }, // avoids a CORS preflight
-    body: JSON.stringify({ auth_ts: authTs, auth_sig: authSig, technik }),
+    body: JSON.stringify({ auth_ts: authTs, auth_sig: authSig, technik, obce: obceRaw }),
   })
     .then((r) => r.json())
     .then((data) => {

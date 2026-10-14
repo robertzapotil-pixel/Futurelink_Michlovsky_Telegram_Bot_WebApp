@@ -135,7 +135,10 @@
   const technik = params.get("technik") || "";
   const authTs = params.get("auth_ts") || "";
   const authSig = params.get("auth_sig") || "";
-  const obceList = (params.get("obce") || "").split("|").filter(Boolean);
+  // Forwarded byte-for-byte to the Evidence API below, which checks it
+  // against the bot's signature and filters the house list by it server-side.
+  const obceRaw = params.get("obce") || "";
+  const obceList = obceRaw.split("|").filter(Boolean);
   const obecSelect = document.getElementById("obec");
   const obecPlaceholder = document.createElement("option");
   obecPlaceholder.value = "";
@@ -239,7 +242,7 @@
   const housesPromise = fetch(HOUSES_API_URL, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify({ auth_ts: authTs, auth_sig: authSig, technik }),
+    body: JSON.stringify({ auth_ts: authTs, auth_sig: authSig, technik, obce: obceRaw }),
   })
     .then((r) => r.json())
     .then((data) => (data.error ? [] : data.houses || []))
