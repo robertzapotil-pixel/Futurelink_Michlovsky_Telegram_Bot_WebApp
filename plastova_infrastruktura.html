@@ -377,7 +377,9 @@
     const dumSelect = document.createElement("select");
     dumSelect.id = "dum_select";
     dumSelect.disabled = true;
-    dumSelect.innerHTML = '<option value="">— nejdřív vyber obec —</option>';
+    dumSelect.innerHTML = obecSelect.value
+      ? '<option value="">— načítám domy —</option>'
+      : '<option value="">— nejdřív vyber obec —</option>';
 
     const card = document.createElement("div");
     card.className = "hint";

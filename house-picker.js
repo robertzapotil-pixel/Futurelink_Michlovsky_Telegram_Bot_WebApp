@@ -30,8 +30,9 @@
   const authSig = params.get("auth_sig") || "";
 
   root.innerHTML = `
+    <div id="hp_loading" class="hint">Načítám seznam domů…</div>
     <label for="hp_obec">Obec</label>
-    <select id="hp_obec"><option value="">— vyber —</option></select>
+    <select id="hp_obec" disabled><option value="">— načítám —</option></select>
 
     <label for="hp_dum">Dům</label>
     <select id="hp_dum" disabled><option value="">— nejdřív vyber obec —</option></select>
@@ -72,6 +73,9 @@
   }
 
   function populateObce() {
+    document.getElementById("hp_loading")?.remove();
+    obecSelect.innerHTML = '<option value="">— vyber —</option>';
+    obecSelect.disabled = false;
     const obce = [...new Set(houses.map((h) => h.obec).filter(Boolean))].sort();
     obce.forEach((obec) => {
       const opt = document.createElement("option");
