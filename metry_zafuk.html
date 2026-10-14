@@ -90,6 +90,23 @@
     <option>288 vl.</option>
   </select>
 
+  <label for="barva_mt">Barva MT</label>
+  <select id="barva_mt" required>
+    <option value="" disabled selected>— vyber —</option>
+    <option>Modrá</option>
+    <option>Oranžová</option>
+    <option>Zelená</option>
+    <option>Hnědá</option>
+    <option>Šedá</option>
+    <option>Bílá</option>
+    <option>Červená</option>
+    <option>Černá</option>
+    <option>Žlutá</option>
+    <option>Fialová</option>
+    <option>Růžová</option>
+    <option>Tyrkysová</option>
+  </select>
+
   <label>Způsob zadání</label>
   <label class="radio-label">
     <input type="radio" name="vstup_mod" value="primo" checked />
@@ -205,6 +222,7 @@
       form: "metry_zafuk",
       dum_id: domId,
       typ_kabelu: document.getElementById("typ_kabelu").value,
+      barva_mt: document.getElementById("barva_mt").value,
       vstup_mod: mode,
       gps: lastPosition ? { lat: lastPosition.latitude, lon: lastPosition.longitude } : null,
       poznamka: document.getElementById("poznamka").value,
@@ -214,6 +232,7 @@
     const missingFields = [];
     if (!data.dum_id) missingFields.push("Dům (vyber a potvrď)");
     if (!data.typ_kabelu) missingFields.push("Typ kabelu");
+    if (!data.barva_mt) missingFields.push("Barva MT");
 
     if (mode === "primo") {
       const metry = parseFloat(metryInput.value);
