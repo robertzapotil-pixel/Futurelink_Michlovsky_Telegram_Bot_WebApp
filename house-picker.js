@@ -28,6 +28,11 @@
   // Mini Apps opened from a persistent ReplyKeyboard button.
   const authTs = params.get("auth_ts") || "";
   const authSig = params.get("auth_sig") || "";
+  // Obce this technician's Firma is allowed to work on (main.py
+  // _send_webapp_button, via forms/house_binding.allowed_obce_for_technician)
+  // — UX only, narrows the dropdown so no one has to scroll past projects
+  // that aren't theirs. The real check runs server-side at submit time.
+  const allowedObce = (params.get("obce") || "").split("|").filter(Boolean);
 
   root.innerHTML = `
     <div id="hp_loading" class="hint">Načítám seznam domů…</div>
@@ -76,7 +81,8 @@
     document.getElementById("hp_loading")?.remove();
     obecSelect.innerHTML = '<option value="">— vyber —</option>';
     obecSelect.disabled = false;
-    const obce = [...new Set(houses.map((h) => h.obec).filter(Boolean))].sort();
+    const allObce = [...new Set(houses.map((h) => h.obec).filter(Boolean))];
+    const obce = (allowedObce.length ? allObce.filter((o) => allowedObce.includes(o)) : allObce).sort();
     obce.forEach((obec) => {
       const opt = document.createElement("option");
       opt.value = obec;
