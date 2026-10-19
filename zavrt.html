@@ -182,24 +182,46 @@
     });
   }
 
-  async function uploadPhoto(file, obec, domId) {
+  const UPLOAD_MAX_ATTEMPTS = 3;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  // `house` carries cislo_popisne/parcelni_cislo so the Apps Script can name
+  // the Drive folder "<obec>_<čp>" (or "<obec>_p<parcelní>") per house — see
+  // appscript/foto_upload.gs. `poradi` is this photo's 1-based position in
+  // the submission, used for the filename.
+  async function uploadPhotoOnce(file, house, poradi) {
     const canvas = await loadScaledCanvas(file, UPLOAD_MAX_DIM);
     const dataUrl = canvas.toDataURL("image/jpeg", UPLOAD_JPEG_QUALITY);
     const dataBase64 = dataUrl.split(",")[1];
-    const filename = `${domId}_${file.name || "foto.jpg"}`;
 
     const response = await fetch(UPLOAD_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" }, // avoids a CORS preflight
       body: JSON.stringify({
-        obec, kategorie: "zavrt", filename,
+        obec: house.obec, kategorie: "zavrt", poradi,
+        cislo_popisne: house.cislo_popisne || "", parcelni_cislo: house.parcelni_cislo || "",
         mimeType: "image/jpeg", dataBase64,
       }),
     });
     if (!response.ok) throw new Error("Nahrávání selhalo (HTTP " + response.status + ")");
     const result = await response.json();
-    if (!result.fileId) throw new Error("Nahrávání selhalo.");
+    if (!result.fileId) throw new Error(result.error || "Nahrávání selhalo.");
     return result.fileId;
+  }
+
+  // Retries a few times before giving up — a single dropped mobile request
+  // used to abort the whole submission and lose a photo.
+  async function uploadPhoto(file, house, poradi) {
+    let lastError;
+    for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
+      try {
+        return await uploadPhotoOnce(file, house, poradi);
+      } catch (err) {
+        lastError = err;
+        if (attempt < UPLOAD_MAX_ATTEMPTS) await sleep(800 * attempt);
+      }
+    }
+    throw lastError;
   }
 
   // GPS: watch continuously while filling the form, use the latest fix on submit.
@@ -263,22 +285,20 @@
       let uploaded = 0;
       const total = requiredInputs.length + extraInputs.length;
       submitStatus.textContent = `Nahrávám fotky… (0/${total})`;
-      // Uploaded in parallel — much faster than one at a time, and the Apps
-      // Script side is safe against the resulting concurrent requests.
-      await Promise.all([
-        ...requiredInputs.map(async (input) => {
-          const fileId = await uploadPhoto(input.files[0], house.obec, house.id);
-          data.photos[input.dataset.slotKey] = fileId;
-          uploaded += 1;
-          submitStatus.textContent = `Nahrávám fotky… (${uploaded}/${total})`;
-        }),
-        ...extraInputs.map(async (input, i) => {
-          const fileId = await uploadPhoto(input.files[0], house.obec, house.id);
-          data.photos[`foto_jine_${i + 1}`] = fileId;
-          uploaded += 1;
-          submitStatus.textContent = `Nahrávám fotky… (${uploaded}/${total})`;
-        }),
-      ]);
+      // Sequential, each with its own retries — uploading many photos at once
+      // used to overload the Apps Script side and silently drop some of them.
+      for (const input of requiredInputs) {
+        const fileId = await uploadPhoto(input.files[0], house, uploaded + 1);
+        data.photos[input.dataset.slotKey] = fileId;
+        uploaded += 1;
+        submitStatus.textContent = `Nahrávám fotky… (${uploaded}/${total})`;
+      }
+      for (let i = 0; i < extraInputs.length; i++) {
+        const fileId = await uploadPhoto(extraInputs[i].files[0], house, uploaded + 1);
+        data.photos[`foto_jine_${i + 1}`] = fileId;
+        uploaded += 1;
+        submitStatus.textContent = `Nahrávám fotky… (${uploaded}/${total})`;
+      }
     } catch (err) {
       submitStatus.textContent = "";
       alert("Nahrávání fotek selhalo: " + err.message + ". Zkus to prosím znovu.");

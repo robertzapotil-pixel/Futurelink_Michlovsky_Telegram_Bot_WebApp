@@ -116,24 +116,45 @@
     });
   }
 
-  async function uploadPhoto(file, obec, domId) {
+  const UPLOAD_MAX_ATTEMPTS = 3;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  // `house` carries cislo_popisne/parcelni_cislo so the Apps Script can name
+  // the Drive folder "<obec>_<čp>" (or "<obec>_p<parcelní>") per house — see
+  // appscript/foto_upload.gs.
+  async function uploadPhotoOnce(file, house) {
     const canvas = await loadScaledCanvas(file, UPLOAD_MAX_DIM);
     const dataUrl = canvas.toDataURL("image/jpeg", UPLOAD_JPEG_QUALITY);
     const dataBase64 = dataUrl.split(",")[1];
-    const filename = `${domId}_${file.name || "foto.jpg"}`;
 
     const response = await fetch(UPLOAD_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" }, // avoids a CORS preflight
       body: JSON.stringify({
-        obec, kategorie: "vykop_zavrt", filename,
+        obec: house.obec, kategorie: "vykop_zavrt", poradi: 1,
+        cislo_popisne: house.cislo_popisne || "", parcelni_cislo: house.parcelni_cislo || "",
         mimeType: "image/jpeg", dataBase64,
       }),
     });
     if (!response.ok) throw new Error("Nahrávání selhalo (HTTP " + response.status + ")");
     const result = await response.json();
-    if (!result.fileId) throw new Error("Nahrávání selhalo.");
+    if (!result.fileId) throw new Error(result.error || "Nahrávání selhalo.");
     return result.fileId;
+  }
+
+  // Retries a few times before giving up — a single dropped mobile request
+  // used to abort the whole submission and lose the photo.
+  async function uploadPhoto(file, house) {
+    let lastError;
+    for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
+      try {
+        return await uploadPhotoOnce(file, house);
+      } catch (err) {
+        lastError = err;
+        if (attempt < UPLOAD_MAX_ATTEMPTS) await sleep(800 * attempt);
+      }
+    }
+    throw lastError;
   }
 
   // GPS: watch continuously while filling the form, use the latest fix on submit.
@@ -184,7 +205,7 @@
     submitBtn.disabled = true;
     try {
       submitStatus.textContent = "Nahrávám fotku…";
-      data.photos.foto_vykop_mt = await uploadPhoto(photoInput.files[0], house.obec, house.id);
+      data.photos.foto_vykop_mt = await uploadPhoto(photoInput.files[0], house);
     } catch (err) {
       submitStatus.textContent = "";
       alert("Nahrávání fotky selhalo: " + err.message + ". Zkus to prosím znovu.");

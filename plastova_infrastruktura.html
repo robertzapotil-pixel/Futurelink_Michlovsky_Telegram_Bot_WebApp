@@ -582,24 +582,47 @@
     });
   }
 
-  async function uploadPhoto(file, obec, domId) {
+  const UPLOAD_MAX_ATTEMPTS = 3;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  // cisloPopisne/parcelniCislo (only set for Výpich/T-matrix, which have a
+  // house) let the Apps Script name the Drive folder "<obec>_<čp>" (or
+  // "<obec>_p<parcelní>") — see appscript/foto_upload.gs. The other 5 types
+  // have no house, so those stay empty and the script falls back to
+  // "<obec>/plastova_infrastruktura/".
+  async function uploadPhotoOnce(file, obec, cisloPopisne, parcelniCislo, poradi) {
     const canvas = await loadScaledCanvas(file, UPLOAD_MAX_DIM);
     const dataUrl = canvas.toDataURL("image/jpeg", UPLOAD_JPEG_QUALITY);
     const dataBase64 = dataUrl.split(",")[1];
-    const filename = domId ? `${domId}_${file.name || "foto.jpg"}` : (file.name || "foto.jpg");
 
     const response = await fetch(UPLOAD_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" }, // avoids a CORS preflight
       body: JSON.stringify({
-        obec, kategorie: "plastova_infrastruktura", filename,
+        obec, kategorie: "plastova_infrastruktura", poradi,
+        cislo_popisne: cisloPopisne || "", parcelni_cislo: parcelniCislo || "",
         mimeType: "image/jpeg", dataBase64,
       }),
     });
     if (!response.ok) throw new Error("Nahrávání selhalo (HTTP " + response.status + ")");
     const result = await response.json();
-    if (!result.fileId) throw new Error("Nahrávání selhalo.");
+    if (!result.fileId) throw new Error(result.error || "Nahrávání selhalo.");
     return result.fileId;
+  }
+
+  // Retries a few times before giving up — a single dropped mobile request
+  // used to abort the whole submission and lose a photo.
+  async function uploadPhoto(file, obec, cisloPopisne, parcelniCislo, poradi) {
+    let lastError;
+    for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
+      try {
+        return await uploadPhotoOnce(file, obec, cisloPopisne, parcelniCislo, poradi);
+      } catch (err) {
+        lastError = err;
+        if (attempt < UPLOAD_MAX_ATTEMPTS) await sleep(800 * attempt);
+      }
+    }
+    throw lastError;
   }
 
   submitBtn.addEventListener("click", async () => {
@@ -650,7 +673,8 @@
       : [];
 
     const uploadObec = usesHouse ? selectedDumHouse.obec : data.obec;
-    const uploadDomId = usesHouse ? selectedDumHouse.id : null;
+    const uploadCisloPopisne = usesHouse ? selectedDumHouse.cislo_popisne : "";
+    const uploadParcelniCislo = usesHouse ? selectedDumHouse.parcelni_cislo : "";
 
     submitBtn.disabled = true;
     try {
@@ -658,20 +682,19 @@
       const total = requiredInputs.length + extraInputs.length;
       submitStatus.textContent = `Nahrávám fotky… (0/${total})`;
       const upload = async (input, key) => {
-        const fileId = await uploadPhoto(input.files[0], uploadObec, uploadDomId);
+        const fileId = await uploadPhoto(
+          input.files[0], uploadObec, uploadCisloPopisne, uploadParcelniCislo, uploaded + 1
+        );
         uploaded += 1;
         submitStatus.textContent = `Nahrávám fotky… (${uploaded}/${total})`;
         return [key, fileId];
       };
-      // Uploaded in parallel — much faster than one at a time, and the Apps
-      // Script side is safe against the resulting concurrent requests.
-      // Promise.all keeps the array order, so the photos end up in the album
-      // in form order (required ones first, then extras) regardless of which
-      // upload finishes first.
-      const entries = await Promise.all([
-        ...requiredInputs.map((input) => upload(input, input.dataset.slotKey)),
-        ...extraInputs.map((input, i) => upload(input, `foto_jine_${i + 1}`)),
-      ]);
+      // Sequential, each with its own retries — uploading many photos at once
+      // used to overload the Apps Script side and silently drop some of them.
+      // Order is required/extras, matching form order in the resulting album.
+      const entries = [];
+      for (const input of requiredInputs) entries.push(await upload(input, input.dataset.slotKey));
+      for (let i = 0; i < extraInputs.length; i++) entries.push(await upload(extraInputs[i], `foto_jine_${i + 1}`));
       entries.forEach(([key, fileId]) => { data.photos[key] = fileId; });
     } catch (err) {
       submitStatus.textContent = "";
